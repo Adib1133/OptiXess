@@ -218,6 +218,12 @@ See `audit/REMEDIATION.md` and `audit/REVIEW.md` for the validation history.
 
 ---
 
+## Development Credits
+
+This project was vibecoded and co-developed with AI agents — Gemini 8 Flash, Claude Sonnet 4.5, and ChatGPT Astra all contributed to the codebase.
+
+---
+
 ## License
 
 OptiScaler is developed by the OptiScaler project. Intel XeSS runtime libraries are subject to Intel's license. OptiXess (this GUI) is a separate configuration tool and does not modify or redistribute the OptiScaler or XeSS source code.
