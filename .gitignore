@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.audit-deps/
+.venv/
+build/
+dist/
+*.spec
+audit/*.exe
+assets/versions/.optiscaler-operation.lock
+
+.task-deps/

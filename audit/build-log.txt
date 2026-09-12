@@ -1,0 +1,110 @@
+567 INFO: PyInstaller: 6.22.2, contrib hooks: 2026.7
+569 INFO: Python: 3.14.4
+620 INFO: Platform: Windows-11-10.0.26200-SP0
+620 INFO: Python environment: C:\Users\MG\AppData\Local\Python\pythoncore-3.14-64
+622 INFO: wrote C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\OptiScalerXeSS.spec
+634 INFO: Removing temporary files and cleaning cache in C:\Users\MG\AppData\Local\pyinstaller
+8448 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\MG\\Desktop\\New folder\\GUI astra last\\GUI astra',
+ 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\python314.zip',
+ 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\DLLs',
+ 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib',
+ 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64',
+ 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages',
+ 'C:\\Users\\MG\\Desktop\\New folder\\GUI astra last\\GUI astra']
+10529 INFO: Appending 'datas' from .spec
+10575 INFO: checking Analysis
+10575 INFO: Building Analysis because Analysis-00.toc is non existent
+10575 INFO: Looking for Python shared library...
+10575 INFO: Using Python shared library: C:\Users\MG\AppData\Local\Python\pythoncore-3.14-64\python314.dll
+10576 INFO: Running Analysis Analysis-00.toc
+10576 INFO: Target bytecode optimization level: 0
+10576 INFO: Initializing module dependency graph...
+10580 INFO: Initializing module graph hook caches...
+10796 INFO: Analyzing modules for base_library.zip ...
+17462 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+19658 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+21096 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+21870 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+21960 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+31477 INFO: Caching module dependency graph...
+31541 INFO: Analyzing C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\main.py
+32124 INFO: Processing standard module hook 'hook-psutil.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+32304 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+32315 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+32582 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+32607 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+33450 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+33555 INFO: Processing standard module hook 'hook-customtkinter.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+33868 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+33873 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+33887 INFO: SetuptoolsInfo: initializing cached setuptools info...
+35443 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+36079 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+36320 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+38896 INFO: Processing standard module hook 'hook-PIL.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+39211 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+40089 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+40621 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+42389 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+42749 INFO: Analyzing hidden import 'py7zr'
+43350 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+43351 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
+43373 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+43407 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+43489 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+43490 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+43516 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+43517 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+43872 INFO: Processing standard module hook 'hook-_osx_support.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+44619 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+44623 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+44643 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+44644 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+46042 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+46053 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+47537 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+47538 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+47702 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+47786 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+47787 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
+47969 INFO: Processing standard module hook 'hook-Cryptodome.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+50483 INFO: Analyzing hidden import 'py7zr.__main__'
+50599 INFO: Processing module hooks (post-graph stage)...
+52442 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+54253 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+54276 INFO: Performing binary vs. data reclassification (1120 entries)
+55031 INFO: Looking for ctypes DLLs
+55082 WARNING: Ignoring AppKit.framework/AppKit imported from C:\Users\MG\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\darkdetect\_mac_detect.py - only basenames are supported with ctypes imports!
+55206 INFO: Analyzing run-time hooks ...
+55216 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+55237 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+55262 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+55276 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+55284 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\Users\\MG\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+55344 INFO: Creating base_library.zip...
+55405 INFO: Looking for dynamic libraries
+56921 INFO: Extra DLL search directories (AddDllDirectory): []
+56921 INFO: Extra DLL search directories (PATH): []
+60392 INFO: Warnings written to C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\build\OptiScalerXeSS\warn-OptiScalerXeSS.txt
+60557 INFO: Graph cross-reference written to C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\build\OptiScalerXeSS\xref-OptiScalerXeSS.html
+60711 INFO: checking PYZ
+60711 INFO: Building PYZ because PYZ-00.toc is non existent
+60711 INFO: Building PYZ (ZlibArchive) C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\build\OptiScalerXeSS\PYZ-00.pyz
+62030 INFO: Building PYZ (ZlibArchive) C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\build\OptiScalerXeSS\PYZ-00.pyz completed successfully.
+62207 INFO: checking PKG
+62207 INFO: Building PKG because PKG-00.toc is non existent
+62207 INFO: Building PKG (CArchive) OptiScalerXeSS.pkg
+82378 INFO: Building PKG (CArchive) OptiScalerXeSS.pkg completed successfully.
+82428 INFO: Bootloader C:\Users\MG\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+82428 INFO: checking EXE
+82428 INFO: Building EXE because EXE-00.toc is non existent
+82428 INFO: Building EXE from EXE-00.toc
+82429 INFO: Copying bootloader EXE to C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\dist\OptiScalerXeSS.exe
+82506 INFO: Copying icon to EXE
+82561 INFO: Copying 0 resources to EXE
+82561 INFO: Embedding manifest in EXE
+82626 INFO: Appending PKG archive to EXE
+82841 INFO: Fixing EXE headers
+94011 INFO: Building EXE from EXE-00.toc completed successfully.
+94056 INFO: Build complete! The results are available in: C:\Users\MG\Desktop\New folder\GUI astra last\GUI astra\dist
