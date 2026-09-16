@@ -1,0 +1,4 @@
+# robots.txt
+User-agent: *
+Allow: /
+Sitemap: https://adib1133.github.io/OptiXess/sitemap.xml
