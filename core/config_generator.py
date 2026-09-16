@@ -81,6 +81,8 @@ class ConfigGenerator:
             missing = [f'{s}.{k}' for s, items in values.items() for k in items if not cfg.has_option(s, k)]
             if missing:
                 raise ValueError('Selected release has an incompatible configuration schema: ' + ', '.join(missing))
+            return ConfigGenerator.update_ini_text(template, values)
+
         for section, items in values.items():
             if not cfg.has_section(section):
                 cfg.add_section(section)
@@ -91,12 +93,71 @@ class ConfigGenerator:
         return ConfigGenerator.MARKER_SIGNATURE + '\n; Configured intent; verify activation in the game overlay.\n' + out.getvalue()
 
     @staticmethod
+    def update_ini_text(ini_text: str, values: dict) -> str:
+        """Update key-value pairs in INI text in-place, preserving all comments, sections, and formatting."""
+        eol = '\r\n'
+        lines = ini_text.splitlines()
+
+        current_section = None
+        section_lines = {}
+
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('[') and ']' in stripped:
+                sec = stripped[1:stripped.find(']')].strip()
+                current_section = sec
+                if current_section not in section_lines:
+                    section_lines[current_section] = []
+            elif current_section is not None:
+                section_lines[current_section].append(idx)
+
+        for section, items in values.items():
+            if section not in section_lines:
+                lines.append(f'[{section}]')
+                section_lines[section] = []
+                for k, v in items.items():
+                    lines.append(f'{k}={v}')
+                    section_lines[section].append(len(lines) - 1)
+                continue
+
+            sec_indices = section_lines[section]
+            remaining = dict(items)
+
+            for idx in sec_indices:
+                line = lines[idx]
+                stripped = line.strip()
+                if not stripped or stripped.startswith(';') or stripped.startswith('#'):
+                    continue
+                if '=' in line:
+                    key, _ = line.split('=', 1)
+                    key = key.strip()
+                    if key in remaining:
+                        val = remaining.pop(key)
+                        lines[idx] = f'{key}={val}'
+
+            if remaining:
+                insert_pos = sec_indices[-1] + 1 if sec_indices else len(lines)
+                for key, val in remaining.items():
+                    lines.insert(insert_pos, f'{key}={val}')
+                    insert_pos += 1
+
+        marker = ConfigGenerator.MARKER_SIGNATURE
+        header = marker + eol + '; Configured intent; verify activation in the game overlay.' + eol
+        body = eol.join(lines) + eol
+        if marker in body:
+            return body
+        return header + body
+
+    @staticmethod
     def generate_fakenvapi_ini(template, reflex_enabled):
         cfg = ConfigGenerator.parser(template)
         if not cfg.has_option('fakenvapi', 'force_reflex'):
             raise ValueError('FakeNvapi configuration lacks force_reflex support.')
-        # An unchecked override means follow the game, not force-disable its FG latency path.
-        cfg.set('fakenvapi', 'force_reflex', '2' if reflex_enabled else '0')
+        val = '2' if reflex_enabled else '0'
+        if template:
+            return ConfigGenerator.update_ini_text(template, {'fakenvapi': {'force_reflex': val}})
+        cfg.set('fakenvapi', 'force_reflex', val)
         out = io.StringIO()
         cfg.write(out)
         return out.getvalue()
+

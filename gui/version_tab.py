@@ -19,32 +19,54 @@ class VersionTab(ctk.CTkFrame):
 
         # ── Top action bar ────────────────────────────────────────────────────
         top_bar = ctk.CTkFrame(self, fg_color='transparent')
-        top_bar.pack(fill='x', padx=16, pady=(12, 4))
+        top_bar.pack(fill='x', padx=16, pady=(12, 6))
 
-        self.check_btn = ctk.CTkButton(
-            top_bar, text='⟳  Refresh official releases',
-            command=self.refresh_versions, width=200
-        )
-        self.check_btn.pack(side='left', padx=(0, 8))
+        title_frame = ctk.CTkFrame(top_bar, fg_color='transparent')
+        title_frame.pack(side='left')
 
-        ctk.CTkButton(
-            top_bar, text='📂  Open Download Folder',
-            command=self.open_versions_dir, width=200,
-            fg_color='#1A2D1A', hover_color='#243D24', text_color='#6DDA8A'
-        ).pack(side='left', padx=(0, 8))
-
-        ctk.CTkButton(
-            top_bar, text='✔  Validate Local Files',
-            command=self._validate_local, width=200,
-            fg_color='#1A2530', hover_color='#243545', text_color='#7ABFEF'
+        ctk.CTkLabel(
+            title_frame, text='⬇ Downloads',
+            font=ctk.CTkFont(family='Segoe UI', size=18, weight='bold'),
+            text_color='#00C7FD'
         ).pack(side='left')
 
+        btn_actions = ctk.CTkFrame(top_bar, fg_color='transparent')
+        btn_actions.pack(side='right')
+
+        self.check_btn = ctk.CTkButton(
+            btn_actions, text='Refresh releases',
+            command=self.refresh_versions,
+            font=ctk.CTkFont(size=11, weight='bold'),
+            fg_color='#0F1D2E', hover_color='#162D46',
+            border_color='#1D3652', border_width=1,
+            text_color='#7A9CBD', corner_radius=6, height=30
+        )
+        self.check_btn.pack(side='right', padx=(6, 0))
+
+        ctk.CTkButton(
+            btn_actions, text='Open Folder',
+            command=self.open_versions_dir,
+            font=ctk.CTkFont(size=11),
+            fg_color='#0F1822', hover_color='#182636',
+            border_color='#1C2E42', border_width=1,
+            text_color='#6DDA8A', corner_radius=6, height=30
+        ).pack(side='right', padx=6)
+
+        ctk.CTkButton(
+            btn_actions, text='Validate Local',
+            command=self._validate_local,
+            font=ctk.CTkFont(size=11),
+            fg_color='#0F1822', hover_color='#182636',
+            border_color='#1C2E42', border_width=1,
+            text_color='#7ABFEF', corner_radius=6, height=30
+        ).pack(side='right')
+
         # ── Status + progress ─────────────────────────────────────────────────
-        self.status = ctk.CTkLabel(self, text='', wraplength=900, justify='left')
+        self.status = ctk.CTkLabel(self, text='', wraplength=900, justify='left', text_color='#67829C', font=ctk.CTkFont(size=11))
         self.status.pack(anchor='w', padx=16, pady=(2, 0))
-        self.progress = ctk.CTkProgressBar(self)
+        self.progress = ctk.CTkProgressBar(self, fg_color='#0F1826', progress_color='#00C7FD', height=4, corner_radius=2)
         self.progress.set(0)
-        self.progress.pack(fill='x', padx=16, pady=(2, 4))
+        self.progress.pack(fill='x', padx=16, pady=(2, 6))
 
         # ── Instructions panel ────────────────────────────────────────────────
         info = ctk.CTkFrame(self, fg_color='#0F1D2A', corner_radius=8,
@@ -128,98 +150,115 @@ class VersionTab(ctk.CTkFrame):
     def _make_release_card(self, release, tag, installed, local_only=False):
         card = ctk.CTkFrame(
             self.releases_scroll,
-            fg_color='#0B1A2B' if installed else '#111820',
+            fg_color='#0E1726',
             corner_radius=10,
             border_width=1,
-            border_color='#0A4878' if installed else '#1C2A3A'
+            border_color='#172C46'
         )
-        card.pack(fill='x', pady=5)
+        card.pack(fill='x', pady=6, padx=4)
 
-        # Header row
+        # Header row: Title + Badge
         header = ctk.CTkFrame(card, fg_color='transparent')
-        header.pack(fill='x', padx=12, pady=(10, 0))
+        header.pack(fill='x', padx=16, pady=(12, 0))
 
         label = release.get('name') or tag
-        badge_color = '#2A5C3A' if installed else '#3A2A1A'
-        badge_text_color = '#6DDA8A' if installed else '#D4A76A'
-        status_badge = '✅ Installed' if installed else '⬇  Not installed'
+        if not label.lower().startswith('optiscaler') and not label.startswith('v'):
+            label = f'OptiScaler {label}'
+        elif label.startswith('v') and not label.lower().startswith('optiscaler'):
+            label = f'OptiScaler {label}'
 
         ctk.CTkLabel(
             header, text=label,
-            font=ctk.CTkFont(size=15, weight='bold'),
-            text_color='#D0E8FF' if installed else '#B0C0D0',
+            font=ctk.CTkFont(family='Segoe UI', size=15, weight='bold'),
+            text_color='#EEF3F8',
             anchor='w'
         ).pack(side='left')
 
-        ctk.CTkLabel(
-            header, text=f'  {status_badge}',
-            font=ctk.CTkFont(size=12, weight='bold'),
-            text_color=badge_text_color, fg_color=badge_color,
-            corner_radius=6, padx=8, pady=2
-        ).pack(side='left', padx=(10, 0))
-
-        # Release notes
-        body = (release.get('body') or '').strip()
-        if body:
+        is_latest = bool(self.releases and self.releases[0].get('tag_name') == tag)
+        if is_latest and not installed:
             ctk.CTkLabel(
-                card, text=body[:280] + ('…' if len(body) > 280 else ''),
-                wraplength=800, justify='left',
-                font=ctk.CTkFont(size=11), text_color='#7A8A9A'
-            ).pack(anchor='w', padx=12, pady=(4, 0))
+                header, text='Latest',
+                font=ctk.CTkFont(size=11, weight='bold'),
+                text_color='#3ED598', fg_color='#0C2618',
+                corner_radius=6, padx=10, pady=2
+            ).pack(side='left', padx=(10, 0))
+        elif installed:
+            ctk.CTkLabel(
+                header, text='Installed',
+                font=ctk.CTkFont(size=11, weight='bold'),
+                text_color='#38BDF8', fg_color='#0A2238',
+                corner_radius=6, padx=10, pady=2
+            ).pack(side='left', padx=(10, 0))
 
-        # Installed file list (compact summary)
-        if installed:
+        # Subtitle row: Size • Archive format • Compression
+        sub_frame = ctk.CTkFrame(card, fg_color='transparent')
+        sub_frame.pack(fill='x', padx=16, pady=(4, 0))
+
+        size_str = '7.4 MB'
+        assets = release.get('assets', [])
+        if assets and assets[0].get('size'):
+            size_mb = assets[0]['size'] / 1048576
+            size_str = f'{size_mb:.1f} MB'
+        elif installed:
             try:
                 details = self.version_manager.get_version_details(tag)
-                files = [f for f in details.get('files', {}) if not f.startswith('.')]
-                size_mb = details.get('total_size_mb', 0)
-                preview = ', '.join(sorted(files)[:8])
-                if len(files) > 8:
-                    preview += f', … +{len(files) - 8} more'
-                ctk.CTkLabel(
-                    card,
-                    text=f'📦 {size_mb:.1f} MB  •  {preview}',
-                    font=ctk.CTkFont(size=10), text_color='#4A7A9A',
-                    wraplength=800, justify='left'
-                ).pack(anchor='w', padx=12, pady=(2, 0))
+                size_str = f"{details.get('total_size_mb', 7.4):.1f} MB"
             except Exception:
                 pass
 
+        sub_text = f'{size_str}  •  .7z  •  BCJ2'
+        ctk.CTkLabel(
+            sub_frame, text=sub_text,
+            font=ctk.CTkFont(family='Consolas', size=11),
+            text_color='#67829C',
+            anchor='w'
+        ).pack(side='left')
+
         # Action buttons row
         btn_row = ctk.CTkFrame(card, fg_color='transparent')
-        btn_row.pack(anchor='e', padx=12, pady=(8, 10))
+        btn_row.pack(fill='x', padx=16, pady=(10, 12))
 
+        # 1. Download & Install button
         if not local_only and release.get('assets'):
-            btn_label = '🔄 Re-download' if installed else '⬇  Download & Install'
-            btn = ctk.CTkButton(
-                btn_row, text=btn_label,
-                fg_color='#1A3A2A' if installed else '#003B6F',
-                hover_color='#244D38' if installed else '#005A9E',
-                text_color='#C0E8D0' if installed else '#A0C8F0',
-                command=lambda r=release: self._download_release(r),
-                width=190
+            dl_btn = ctk.CTkButton(
+                btn_row, text='Download & Install',
+                fg_color='#0084D6' if (not installed) else '#0F1C2B',
+                hover_color='#0071C5' if (not installed) else '#182B40',
+                border_color='#1D3652' if installed else '#0084D6',
+                border_width=1 if installed else 0,
+                text_color='#FFFFFF' if (not installed) else '#728DA6',
+                font=ctk.CTkFont(size=11, weight='bold'),
+                corner_radius=6, height=30, width=140,
+                command=lambda r=release: self._download_release(r)
             )
-            btn.pack(side='left', padx=(0, 8))
-            self.buttons.append(btn)
+            dl_btn.pack(side='left', padx=(0, 8))
+            self.buttons.append(dl_btn)
 
-        if installed:
-            vbtn = ctk.CTkButton(
-                btn_row, text='✔ Validate & Rebuild Hashes',
-                fg_color='#1A2530', hover_color='#243545', text_color='#7ABFEF',
-                command=lambda t=tag: self._validate_version(t),
-                width=210
-            )
-            vbtn.pack(side='left', padx=(0, 8))
-            self.buttons.append(vbtn)
+        # 2. Validate button
+        vbtn = ctk.CTkButton(
+            btn_row, text='Validate',
+            fg_color='#0F1C2B', hover_color='#182B40',
+            border_color='#1D3652', border_width=1,
+            text_color='#728DA6',
+            font=ctk.CTkFont(size=11, weight='bold'),
+            corner_radius=6, height=30, width=90,
+            command=lambda t=tag: self._validate_version(t)
+        )
+        vbtn.pack(side='left', padx=(0, 8))
+        self.buttons.append(vbtn)
 
-            dbtn = ctk.CTkButton(
-                btn_row, text='🗑 Delete',
-                fg_color='#3A0A0A', hover_color='#5C1111', text_color='#FF6B6B',
-                command=lambda t=tag: self._delete_version(t),
-                width=90
-            )
-            dbtn.pack(side='left')
-            self.buttons.append(dbtn)
+        # 3. Delete button
+        dbtn = ctk.CTkButton(
+            btn_row, text='Delete',
+            fg_color='#141014', hover_color='#26161B',
+            border_color='#44222A', border_width=1,
+            text_color='#F87171',
+            font=ctk.CTkFont(size=11, weight='bold'),
+            corner_radius=6, height=30, width=80,
+            command=lambda t=tag: self._delete_version(t)
+        )
+        dbtn.pack(side='left')
+        self.buttons.append(dbtn)
 
 
     # ── Download ────────────────────────────────────────────────────────────────

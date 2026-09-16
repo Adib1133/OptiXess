@@ -13,7 +13,7 @@ class LogConsole(ctk.CTkFrame):
     """Real-time scrolling terminal console for injection & safety logs."""
 
     def __init__(self, master, **kwargs):
-        super().__init__(master, fg_color=("#1A1D24", "#15181F"), corner_radius=10, **kwargs)
+        super().__init__(master, fg_color="#0B1322", border_color="#162A44", border_width=1, corner_radius=12, **kwargs)
 
         self._build_ui()
         self.dispatcher = UIDispatcher(self)
@@ -21,13 +21,13 @@ class LogConsole(ctk.CTkFrame):
     def _build_ui(self):
         # Header bar
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=12, pady=(10, 4))
+        header.pack(fill="x", padx=16, pady=(14, 6))
 
         title = ctk.CTkLabel(
             header,
             text="LIVE DIAGNOSTIC & SAFETY CONSOLE",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="#A0A5B0"
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color="#00C7FD"
         )
         title.pack(side="left")
 
@@ -37,11 +37,15 @@ class LogConsole(ctk.CTkFrame):
         clear_btn = ctk.CTkButton(
             btn_frame,
             text="Clear",
-            width=50,
-            height=22,
-            font=ctk.CTkFont(size=10),
-            fg_color="#2A2E38",
-            hover_color="#3A3F4C",
+            width=60,
+            height=26,
+            font=ctk.CTkFont(size=11),
+            fg_color="#0F1D2E",
+            border_color="#1A3452",
+            border_width=1,
+            text_color="#7A9CBD",
+            hover_color="#162D46",
+            corner_radius=6,
             command=self.clear_logs
         )
         clear_btn.pack(side="right", padx=2)
@@ -50,12 +54,12 @@ class LogConsole(ctk.CTkFrame):
         self.text_area = ctk.CTkTextbox(
             self,
             font=ctk.CTkFont(family="Consolas", size=11),
-            fg_color="#0F1116",
+            fg_color="#080D17",
             text_color="#D8DEE9",
-            corner_radius=6,
-            wrap="word", height=55
+            corner_radius=8,
+            wrap="word"
         )
-        self.text_area.pack(fill="both", expand=True, padx=12, pady=(4, 10))
+        self.text_area.pack(fill="both", expand=True, padx=16, pady=(4, 16))
         self.text_area.configure(state="disabled")
 
     def log(self, message: str, level: str = "info"):

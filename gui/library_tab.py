@@ -13,12 +13,20 @@ from gui.dispatch import UIDispatcher
 class LibraryTab(ctk.CTkFrame):
     """Intel Arc Styled View presenting the user's game library and quick injection status."""
 
-    def __init__(self, master, game_library, on_select_game: Callable[[dict], None], log_callback: Callable[[str, str], None], **kwargs):
+    def __init__(self, master, game_library, on_select_game: Callable[[dict], None], log_callback: Callable[[str, str], None],
+                 hw_info=None, on_show_system_info=None, on_force_inject=None, on_install=None, on_launch=None, on_revert=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
 
         self.library = game_library
         self.on_select_game = on_select_game
         self.log = log_callback
+        self.hw_info = hw_info or {"badge_text": "Arc GPU • XMX", "is_arc_detected": True}
+        self.on_show_system_info = on_show_system_info
+        self.on_force_inject = on_force_inject
+        self.on_install = on_install
+        self.on_launch = on_launch
+        self.on_revert = on_revert
+        self.active_profile = None
         self.search_term = ""
         self.dispatcher = UIDispatcher(self)
         self.scanning = False
@@ -27,9 +35,127 @@ class LibraryTab(ctk.CTkFrame):
         self.refresh_library()
 
     def _build_ui(self):
-        # Top toolbar
-        toolbar = ctk.CTkFrame(self, fg_color=("#121622", "#0D111A"), corner_radius=12, border_width=1, border_color="#1E2738")
-        toolbar.pack(fill="x", padx=14, pady=(10, 8))
+        # ── 1. Hero Card Matching UI Sample 1 ──────────────────────────────────
+        hero = ctk.CTkFrame(self, fg_color="#0B1322", corner_radius=12, border_width=1, border_color="#162A44")
+        hero.pack(fill="x", padx=14, pady=(10, 8))
+
+        # Field builder helper
+        def make_field(label_text, default_value):
+            field = ctk.CTkFrame(hero, fg_color="#101C2E", corner_radius=8, border_width=1, border_color="#182C46", height=38)
+            field.pack(fill="x", padx=16, pady=4)
+            field.pack_propagate(False)
+            ctk.CTkLabel(
+                field, text=label_text, width=80, anchor="w",
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                text_color="#7A9ABD"
+            ).pack(side="left", padx=14)
+            val_lbl = ctk.CTkLabel(
+                field, text=default_value, anchor="e",
+                font=ctk.CTkFont(family="Consolas", size=13, weight="bold"),
+                text_color="#E2EDF8"
+            )
+            val_lbl.pack(side="right", padx=14)
+            return val_lbl
+
+        self.hero_game_lbl = make_field("Game", "Marvel's Spider-Man 2")
+        self.hero_proxy_lbl = make_field("Proxy", "dxgi.dll")
+        self.hero_upscaler_lbl = make_field("Upscaler", "XeSS SR • Quality")
+
+        # Badges row: [ XeSS SR ]  [ XeFG ]  [ Snapshot OK ]
+        badges_row = ctk.CTkFrame(hero, fg_color="transparent")
+        badges_row.pack(fill="x", padx=16, pady=(8, 4))
+
+        self.badge_xess = ctk.CTkLabel(
+            badges_row, text="XeSS SR",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#0D2235", border_color="#00A2E8", border_width=1,
+            text_color="#38C8F8", corner_radius=6, padx=12, pady=4
+        )
+        self.badge_xess.pack(side="left", padx=(0, 8))
+
+        self.badge_xefg = ctk.CTkLabel(
+            badges_row, text="XeFG",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#10243C", border_color="#1B5E94", border_width=1,
+            text_color="#5CA4E8", corner_radius=6, padx=12, pady=4
+        )
+        self.badge_xefg.pack(side="left", padx=(0, 8))
+
+        self.badge_snapshot = ctk.CTkLabel(
+            badges_row, text="Snapshot OK",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#0D2618", border_color="#246E45", border_width=1,
+            text_color="#3ED598", corner_radius=6, padx=12, pady=4
+        )
+        self.badge_snapshot.pack(side="left")
+
+        # Glowing Neon Cyan Progress bar
+        self.hero_progress = ctk.CTkProgressBar(
+            hero, fg_color="#101E30", progress_color="#00C7FD",
+            height=6, corner_radius=3
+        )
+        self.hero_progress.set(0.65)
+        self.hero_progress.pack(fill="x", padx=16, pady=(10, 8))
+
+        # Bottom Action Row: [ Force Inject ] [ Arc A770 • XMX ] ... [ Install / Update ] [ Launch ] [ Revert ]
+        action_row = ctk.CTkFrame(hero, fg_color="transparent")
+        action_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        # Left action pills
+        self.btn_force = ctk.CTkButton(
+            action_row, text="Force Inject",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#261608", hover_color="#38200C",
+            border_color="#A06020", border_width=1,
+            text_color="#F59E0B", corner_radius=6, height=32, width=110,
+            command=self._on_hero_force
+        )
+        self.btn_force.pack(side="left", padx=(0, 8))
+
+        hw_text = self.hw_info.get('badge_text', 'Arc A770 • XMX')
+        self.btn_hw = ctk.CTkButton(
+            action_row, text=hw_text,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#0C2419", hover_color="#143625",
+            border_color="#1E6040", border_width=1,
+            text_color="#34D399", corner_radius=6, height=32, width=120,
+            command=self._on_hero_hw
+        )
+        self.btn_hw.pack(side="left")
+
+        # Right control buttons
+        self.btn_install = ctk.CTkButton(
+            action_row, text="Install / Update",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#0071C5", hover_color="#005A9E",
+            text_color="#FFFFFF", corner_radius=6, height=32, width=125,
+            command=self._on_hero_install
+        )
+        self.btn_install.pack(side="right", padx=(6, 0))
+
+        self.btn_launch = ctk.CTkButton(
+            action_row, text="Launch",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            fg_color="#121D2C", hover_color="#1B2B40",
+            border_color="#1D3652", border_width=1,
+            text_color="#8AB4D8", corner_radius=6, height=32, width=80,
+            command=self._on_hero_launch
+        )
+        self.btn_launch.pack(side="right", padx=6)
+
+        self.btn_revert = ctk.CTkButton(
+            action_row, text="Revert",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            fg_color="#181014", hover_color="#29151B",
+            border_color="#44222A", border_width=1,
+            text_color="#F87171", corner_radius=6, height=32, width=75,
+            command=self._on_hero_revert
+        )
+        self.btn_revert.pack(side="right")
+
+        # ── 2. Library Search & Toolbar ────────────────────────────────────────
+        toolbar = ctk.CTkFrame(self, fg_color="#0E1624", corner_radius=10, border_width=1, border_color="#16273C")
+        toolbar.pack(fill="x", padx=14, pady=(4, 6))
 
         # Search bar
         self.search_var = ctk.StringVar()
@@ -37,58 +163,100 @@ class LibraryTab(ctk.CTkFrame):
         search_entry = ctk.CTkEntry(
             toolbar,
             textvariable=self.search_var,
-            placeholder_text="🔍 Search library (by title, engine, or upscaler)...",
+            placeholder_text="🔍 Search library (title, engine, or upscaler)...",
             width=280,
-            height=34,
-            fg_color="#0A0D14",
-            border_color="#1E2738"
+            height=32,
+            fg_color="#0A0E17",
+            border_color="#182A40"
         )
-        search_entry.pack(side="left", padx=14, pady=10)
+        search_entry.pack(side="left", padx=12, pady=8)
 
         # Action Buttons
         add_btn = ctk.CTkButton(
             toolbar,
             text="+ Add Game (.exe / .lnk)",
-            width=170,
-            height=34,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            width=165,
+            height=32,
+            font=ctk.CTkFont(size=11, weight="bold"),
             fg_color="#0071C5",
             hover_color="#005A9E",
             command=self._add_game_file
         )
-        add_btn.pack(side="right", padx=(4, 14), pady=10)
+        add_btn.pack(side="right", padx=(4, 12), pady=8)
 
         add_folder_btn = ctk.CTkButton(
             toolbar,
             text="+ Add Folder",
-            width=110,
-            height=34,
-            font=ctk.CTkFont(size=12),
-            fg_color="#1E2738",
-            hover_color="#2A374E",
+            width=100,
+            height=32,
+            font=ctk.CTkFont(size=11),
+            fg_color="#162232",
+            hover_color="#22344C",
             command=self._add_game_folder
         )
-        add_folder_btn.pack(side="right", padx=4, pady=10)
+        add_folder_btn.pack(side="right", padx=4, pady=8)
 
         scan_btn = ctk.CTkButton(
             toolbar,
             text="⚡ Auto-Scan (Steam/Epic)",
-            width=170,
-            height=34,
-            font=ctk.CTkFont(size=12),
-            fg_color="#1E2738",
-            hover_color="#2A374E",
+            width=160,
+            height=32,
+            font=ctk.CTkFont(size=11),
+            fg_color="#162232",
+            hover_color="#22344C",
             command=self._auto_scan
         )
-        scan_btn.pack(side="right", padx=4, pady=10)
+        scan_btn.pack(side="right", padx=4, pady=8)
 
-        # Main scrollable frame for cards
+        # ── 3. Scrollable Library Cards ────────────────────────────────────────
         self.cards_scroll = ctk.CTkScrollableFrame(
             self,
             fg_color="transparent",
             corner_radius=0
         )
-        self.cards_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.cards_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+    def set_active_game(self, profile: dict):
+        """Updates the top hero card with the selected profile's details."""
+        self.active_profile = profile
+        name = profile.get("name", "Unknown Game")
+        self.hero_game_lbl.configure(text=name)
+        hook = profile.get("effective_settings", {}).get("hook_method") or profile.get("hook_method", "dxgi.dll")
+        self.hero_proxy_lbl.configure(text=hook)
+        quality = profile.get("effective_settings", {}).get("xess_quality", "Quality")
+        self.hero_upscaler_lbl.configure(text=f"XeSS SR • {quality}")
+
+        is_injected = profile.get("is_injected", False)
+        if is_injected:
+            self.badge_snapshot.configure(text="Snapshot OK", text_color="#3ED598", fg_color="#0D2618", border_color="#246E45")
+            self.hero_progress.set(1.0)
+        else:
+            self.badge_snapshot.configure(text="Vanilla (Stock)", text_color="#7A9ABD", fg_color="#101A28", border_color="#1A3048")
+            self.hero_progress.set(0.0)
+
+    def _on_hero_force(self):
+        if self.on_force_inject:
+            self.on_force_inject()
+        elif self.active_profile:
+            self.on_select_game(self.active_profile)
+
+    def _on_hero_hw(self):
+        if self.on_show_system_info:
+            self.on_show_system_info()
+
+    def _on_hero_install(self):
+        if self.on_install:
+            self.on_install()
+        elif self.active_profile:
+            self.on_select_game(self.active_profile)
+
+    def _on_hero_launch(self):
+        if self.on_launch:
+            self.on_launch()
+
+    def _on_hero_revert(self):
+        if self.on_revert:
+            self.on_revert()
 
     def _on_search_changed(self, *args):
         self.search_term = self.search_var.get().lower().strip()
@@ -100,6 +268,15 @@ class LibraryTab(ctk.CTkFrame):
             child.destroy()
 
         profiles = self.library.get_all_profiles()
+
+        if profiles and (self.active_profile is None or not any(p.get("id") == self.active_profile.get("id") for p in profiles)):
+            self.set_active_game(profiles[0])
+        elif self.active_profile:
+            # Refresh active profile data if updated
+            for p in profiles:
+                if p.get("id") == self.active_profile.get("id"):
+                    self.set_active_game(p)
+                    break
 
         if self.search_term:
             profiles = [
@@ -124,12 +301,19 @@ class LibraryTab(ctk.CTkFrame):
             self._create_game_card(self.cards_scroll, p)
 
     def _create_game_card(self, parent, profile: dict):
-        card = ctk.CTkFrame(parent, fg_color=("#121622", "#0D111A"), corner_radius=12, border_width=1, border_color="#1E2738")
-        card.pack(fill="x", pady=6, padx=4)
+        is_active = bool(self.active_profile and self.active_profile.get("id") == profile.get("id"))
+        card = ctk.CTkFrame(
+            parent,
+            fg_color="#0F1B2C" if is_active else "#0E1624",
+            corner_radius=10,
+            border_width=1,
+            border_color="#0071C5" if is_active else "#182A40"
+        )
+        card.pack(fill="x", pady=4, padx=4)
 
         # Left info section
         info_frame = ctk.CTkFrame(card, fg_color="transparent")
-        info_frame.pack(side="left", fill="both", expand=True, padx=16, pady=12)
+        info_frame.pack(side="left", fill="both", expand=True, padx=16, pady=10)
 
         title_row = ctk.CTkFrame(info_frame, fg_color="transparent")
         title_row.pack(fill="x", anchor="w")
@@ -226,15 +410,19 @@ class LibraryTab(ctk.CTkFrame):
         act_frame = ctk.CTkFrame(card, fg_color="transparent")
         act_frame.pack(side="right", padx=14, pady=12)
 
+        def select_this(p=profile):
+            self.set_active_game(p)
+            self.on_select_game(p)
+
         config_btn = ctk.CTkButton(
             act_frame,
             text="Configure & Inject ➔",
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color="#0071C5",
             hover_color="#005A9E",
-            height=34,
+            height=32,
             width=150,
-            command=lambda p=profile: self.on_select_game(p)
+            command=select_this
         )
         config_btn.pack(side="top", pady=2)
 

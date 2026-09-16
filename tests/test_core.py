@@ -184,3 +184,15 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(Path(item['backup_path']).read_bytes(), b'original readonly')
         finally:
             original.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    def test_optiscaler_ini_preserves_original_comments_and_full_size(self):
+        res = self.apply(frame_gen_enabled=True, fg_input='dlssg')
+        self.assertTrue(res['success'])
+        installed_ini = self.folder / 'OptiScaler.ini'
+        self.assertTrue(installed_ini.exists())
+        content = installed_ini.read_text(encoding='utf-8-sig')
+        # Check that comments and full documentation are preserved (>40KB, not 7KB)
+        self.assertGreater(len(content.encode('utf-8')), 40000)
+        self.assertIn('; Select Upscaler for Dx12 games', content)
+        self.assertIn('; -------------------------------------------------------', content)
+
