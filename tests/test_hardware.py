@@ -47,7 +47,7 @@ class HardwareTests(unittest.TestCase):
             
             # In automatic mode, unlisted game yields error
             auto_plan = build_plan(analysis, {'installation_mode': 'automatic', 'upscaler_enabled': True})
-            self.assertTrue(any('No reviewed automatic recipe' in e for e in auto_plan['errors']))
+            self.assertTrue(any('No supported upscaler input' in e for e in auto_plan['errors']))
             
             # In manual mode, user choice to install XeSS upscaler succeeds and is not blocked
             manual_plan = build_plan(analysis, {'installation_mode': 'manual', 'upscaler_enabled': True, 'hook_method': 'dxgi.dll'})

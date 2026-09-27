@@ -12,15 +12,15 @@ sys.path[:0] = [str(ROOT), str(ROOT / '.audit-deps')]
 from core.files import sha256
 
 
-with tempfile.TemporaryDirectory(prefix='OptiScaler standalone ') as tmp:
+with tempfile.TemporaryDirectory(prefix='ArcScaler standalone ') as tmp:
     folder = Path(tmp)
-    exe = folder / 'OptiScalerXeSS.exe'
-    shutil.copy2(ROOT / 'OptiScalerXeSS.exe', exe)
+    exe = folder / 'ArcScaler.exe'
+    shutil.copy2(Path(sys.argv[1]) if len(sys.argv)>1 else ROOT / 'ArcScaler.exe', exe)
     user_data = folder / 'user-data'
     cache = user_data / 'assets/versions/releases_cache.json'
     cache.parent.mkdir(parents=True)
     cache.write_text('[{"tag_name":"v0.9.4","name":"v0.9.4","assets":[]}]', encoding='utf-8')
-    env = dict(os.environ, OPTISCALER_GUI_DATA_DIR=str(user_data))
+    env = dict(os.environ, ARCSCALER_DATA_DIR=str(user_data))
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = subprocess.SW_HIDE
@@ -34,6 +34,6 @@ with tempfile.TemporaryDirectory(prefix='OptiScaler standalone ') as tmp:
               'application_log': logs, 'stderr': result.stderr.decode('utf-8', errors='replace')}
     if report['bundled_package_seeded']:
         report['seed_hash_matches'] = sha256(user_data / 'assets/versions/v0.9.4/OptiScaler.dll') == sha256(ROOT / 'assets/versions/v0.9.4/OptiScaler.dll')
-    (ROOT / 'audit/standalone-smoke-result.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    (ROOT / 'audit/arcscaler-smoke-result.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report, indent=2))
     assert result.returncode == 0 and report.get('seed_hash_matches') and 'Unhandled error' not in logs, report

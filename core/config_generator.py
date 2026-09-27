@@ -5,14 +5,13 @@ belongs to Intel's runtime; NetworkModel is a network variant, not XMX/DP4a.
 """
 import configparser
 import io
-import math
+from core.settings import QUALITY_RATIOS, SCHEMA, validate
 
 
 class ConfigGenerator:
     MARKER_SIGNATURE = '; OPTISCALER_XESS_SUITE_INJECTED = true'
-    QUALITY_RATIOS = {'Ultra Quality Plus': 1.2, 'Ultra Quality': 1.3, 'Quality': 1.5,
-                      'Balanced': 1.7, 'Performance': 2.0, 'Ultra Performance': 3.0}
-    FG_INPUTS = ('dlssg', 'fsrfg', 'fsrfg30', 'upscaler')
+    QUALITY_RATIOS = QUALITY_RATIOS
+    FG_INPUTS = SCHEMA['fg_input'].options
 
     @staticmethod
     def parser(text=''):
@@ -29,18 +28,11 @@ class ConfigGenerator:
                            sharpness=0.3, custom_scale=None, invert_depth=None, jitter_cancellation=None,
                            overlay_menu=True, log_level=2, fg_input=None, template=None, upscaler_enabled=False, gpu_spoofing=False):
         """Compatibility method name; output is deployed as OptiScaler.ini."""
-        if starting_upscaler not in ('DLSS', 'FSR') or xess_quality not in (*ConfigGenerator.QUALITY_RATIOS, 'User Defined'):
-            raise ValueError('Unsupported input or resolution preset.')
+        validate({k: v for k,v in locals().items() if k in SCHEMA and not (k == 'fg_input' and v is None)})
         if reflex_boost:
             raise ValueError('Reflex Boost is not a supported OptiScaler setting. Use the game control.')
-        if xess_network_model not in (None, 'auto', 0, 1, 2, 3, 4, 5):
-            raise ValueError('Unsupported XeSS network variant.')
-        if not math.isfinite(float(sharpness)) or not 0 <= float(sharpness) <= 1:
-            raise ValueError('Sharpness must be between 0 and 1.')
         if log_level not in range(5):
             raise ValueError('Invalid logging level.')
-        if custom_scale is not None and (not math.isfinite(float(custom_scale)) or not 0.25 <= float(custom_scale) <= 1):
-            raise ValueError('Render scale must be between 0.25 and 1.')
         if frame_gen_enabled and not overlay_menu:
             raise ValueError('OptiScaler frame generation requires its overlay menu.')
         if fg_input is None:
@@ -50,13 +42,11 @@ class ConfigGenerator:
         if fg_input not in ConfigGenerator.FG_INPUTS:
             raise ValueError('Unsupported frame-generation input.')
         boolean = lambda value: str(bool(value)).lower()
-        override_ratio = upscaler_enabled and xess_quality != 'User Defined'
+        override_ratio = upscaler_enabled and (custom_scale is not None or xess_quality != 'User Defined')
         ratio = 1 / float(custom_scale) if custom_scale is not None else ConfigGenerator.QUALITY_RATIOS.get(xess_quality, 1.5)
-        if frame_gen_enabled and fg_input == 'upscaler' and not upscaler_enabled:
-            raise ValueError('Upscaler-driven FG requires selecting XeSS upscaling too.')
         values = {
             'Upscalers': {'Dx11Upscaler': 'xess', 'Dx12Upscaler': 'xess', 'VulkanUpscaler': 'xess'},
-            'Inputs': {'EnableXeSSInputs': 'false', 'UseFsr2Inputs': boolean(upscaler_enabled),
+            'Inputs': {'EnableXeSSInputs': boolean(upscaler_enabled and starting_upscaler == 'XeSS'), 'UseFsr2Inputs': boolean(upscaler_enabled),
                        'UseFsr3Inputs': boolean(upscaler_enabled), 'UseFfxInputs': boolean(upscaler_enabled), 'EnableDlssInputs': boolean(upscaler_enabled and starting_upscaler == 'DLSS'),
                        'EnableFsr2Inputs': boolean(upscaler_enabled and starting_upscaler == 'FSR'),
                        'EnableFsr3Inputs': boolean((upscaler_enabled and starting_upscaler == 'FSR') or (frame_gen_enabled and fg_input == 'fsrfg30')),
@@ -160,4 +150,3 @@ class ConfigGenerator:
         out = io.StringIO()
         cfg.write(out)
         return out.getvalue()
-

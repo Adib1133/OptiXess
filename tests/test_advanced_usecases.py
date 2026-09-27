@@ -45,7 +45,7 @@ class DiscoveryTests(unittest.TestCase):
         lib = GameLibrary(str(self.root / 'profiles.json'))
         profile = lib.add_game_by_path(str(exe))
         settings = {'custom_scale': 0.7, 'optiscaler_version': 'v0.9.4', 'fg_input': 'fsrfg30',
-                    'invert_depth': True, 'jitter_cancellation': False, 'settings_schema': 2}
+                    'invert_depth': True, 'jitter_cancellation': False, 'settings_schema': 3}
         lib.update_profile(profile['id'], settings)
         lib.add_game_by_path(str(exe))
         restored = GameLibrary(str(self.root / 'profiles.json')).get_all_profiles()[0]

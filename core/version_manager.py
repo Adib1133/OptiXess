@@ -54,13 +54,19 @@ class VersionManager:
         files = {'OptiScaler.dll': proxy}
         required = ['OptiScaler.ini']
         if upscaler:
-            required += ['libxess.dll', 'libxess_dx11.dll']
-        if frame_gen or fake_nvapi:
-            required += ['libxell.dll']
+            required += ['libxess.dll']
         if frame_gen:
-            required += list(self.FG_DLLS)
+            required += ['libxess_fg.dll', 'libxell.dll']
         if fake_nvapi:
-            required += ['fakenvapi.dll', 'fakenvapi.ini']
+            required += ['fakenvapi.dll', 'fakenvapi.ini', 'libxell.dll']
+        # Discover supported runtime variants from this release, not a fixed copy list.
+        for path in sorted(root.iterdir()):
+            name = path.name.lower()
+            wanted = (upscaler and name.startswith('libxess') and 'fg' not in name
+                      or frame_gen and name.startswith(('libxess_fg', 'libxessfg'))
+                      or (frame_gen or fake_nvapi) and name.startswith(('libxell', 'fakenvapi')))
+            if wanted and path.suffix.lower() in ('.dll', '.ini'):
+                files[path.name] = path
         for name in required:
             path = safe_path(root, name)
             if not path.is_file():
@@ -135,7 +141,7 @@ class VersionManager:
         except (OSError, ValueError):
             pass
         try:
-            request = urllib.request.Request(self.GITHUB_API_URL, headers={'User-Agent': 'OptiScaler-XeSS-GUI/1.0'})
+            request = urllib.request.Request(self.GITHUB_API_URL, headers={'User-Agent': 'ArcScaler/1.0'})
             with urllib.request.urlopen(request, timeout=15) as response:
                 raw = json.loads(response.read(4 * 1024 * 1024))
             if not isinstance(raw, list):
@@ -167,10 +173,13 @@ class VersionManager:
             os.replace(previous, dest)
         return previous
 
-    def download_and_install_version(self, release_info, progress_callback=None):
+    def download_and_install_version(self, release_info, progress_callback=None, cancel_event=None):
         report = progress_callback or (lambda *args: None)
+        def check_cancel():
+            if cancel_event is not None and cancel_event.is_set():raise ValueError('Download cancelled')
         committed = False
         try:
+            check_cancel()
             tag = release_info.get('tag_name')
             dest = self.version_path(tag)
             assets = release_info.get('assets', [])
@@ -193,10 +202,11 @@ class VersionManager:
                     archive = Path(tmp) / name
                     extract = Path(tmp) / 'payload'
                     extract.mkdir()
-                    request = urllib.request.Request(url, headers={'User-Agent': 'OptiScaler-XeSS-GUI/1.0'})
+                    request = urllib.request.Request(url, headers={'User-Agent': 'ArcScaler/1.0'})
                     with urllib.request.urlopen(request, timeout=60) as response, archive.open('wb') as out:
                         downloaded = 0
                         while chunk := response.read(1024 * 1024):
+                            check_cancel()
                             downloaded += len(chunk)
                             if downloaded > expected_size:
                                 raise ValueError('Archive exceeds advertised size.')
@@ -208,7 +218,9 @@ class VersionManager:
                     if digest and (not digest.startswith('sha256:') or sha256(archive) != digest[7:]):
                         raise ValueError('GitHub archive checksum mismatch.')
                     report(0.85, 'Validating and extracting archive')
+                    check_cancel()
                     self._extract_archive(archive, extract)
+                    check_cancel()
                     self._ensure_root_binaries(extract)
                     # Validate in isolation; stale installed files cannot satisfy this check.
                     staged_vm = VersionManager(tmp)
@@ -226,6 +238,7 @@ class VersionManager:
                     except OSError:
                         pass
                     # Keep previous version until the new directory is fully committed.
+                    check_cancel()
                     if previous.exists():
                         self._remove_staging(previous)
                     if dest.exists():

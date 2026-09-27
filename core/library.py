@@ -15,6 +15,7 @@ from core.files import write_json
 from typing import Dict, List, Optional
 from core.detector import GameDetector
 from core.safety import SafetyManager
+from core.settings import defaults, migrate, HOOKS
 
 def synchronized(method):
     @wraps(method)
@@ -29,12 +30,12 @@ class GameLibrary:
 
     def __init__(self, storage_path: Optional[str] = None):
         self._lock = threading.RLock()
+        self.new_game_defaults = {}
         if storage_path:
             self.storage_path = storage_path
         else:
-            app_dir = os.path.join(os.environ.get("APPDATA", "."), "OptiScalerXeSS")
-            os.makedirs(app_dir, exist_ok=True)
-            self.storage_path = os.path.join(app_dir, "profiles.json")
+            from core.paths import data_root
+            self.storage_path = str(data_root() / 'profiles.json')
 
         self.profiles: Dict[str, Dict] = {}
         self.load_profiles()
@@ -49,12 +50,13 @@ class GameLibrary:
                 if not isinstance(self.profiles, dict) or any(not isinstance(v, dict) for v in self.profiles.values()):
                     raise ValueError('Profiles must be a mapping of game records.')
                 for profile in self.profiles.values():
-                    if profile.get('settings_schema') != 2:
+                    if profile.get('settings_schema', 0) < 2:
                         profile['xess_network_model'] = None
                         profile['reflex_boost'] = False
                         profile['fg_input'] = 'dlssg' if profile.get('starting_upscaler', 'DLSS') == 'DLSS' else 'fsrfg'
                         profile['settings_schema'] = 2
                         profile['recovery_dirs'] = profile.get('all_target_dirs', [])
+                    profile.update(migrate(profile))
             except Exception as exc:
                 raise ValueError(f'Cannot read profiles at {self.storage_path}. Original file retained: {exc}') from exc
         else:
@@ -76,6 +78,8 @@ class GameLibrary:
         existing = self.profiles.get(game_id, {})
 
         profile = {
+            **defaults(),
+            **self.new_game_defaults,
             **existing,
             "id": game_id,
             "name": analysis["game_name"],
@@ -88,14 +92,9 @@ class GameLibrary:
             "detected_upscalers": analysis["detected_upscalers"],
             "anti_cheat": analysis.get("anti_cheat"),
             "recommended_hook": analysis["recommended_hook"],
-            # User configurations - defaults tuned for Intel Arc
-            "starting_upscaler": existing.get("starting_upscaler", "DLSS"),
-            "hook_method": existing.get("hook_method", analysis["recommended_hook"]),
-            "xess_quality": existing.get("xess_quality", "User Defined"),
-            "upscaler_enabled": existing.get("upscaler_enabled", False),
-            "frame_gen_enabled": existing.get("frame_gen_enabled", False),
-            "xess_network_model": existing.get("xess_network_model"),
-            "sharpness": existing.get("sharpness", 0.3),
+            "graphics_api": analysis.get('graphics_api', 'Unknown'),
+            "architecture": analysis.get('architecture'),
+            "steam_appid": analysis.get('steam_appid'),
             "is_injected": self._check_injected_status(analysis["target_dir"]),
             "has_backup": SafetyManager.has_active_backup(analysis["target_dir"])
         }
@@ -164,6 +163,8 @@ class GameLibrary:
             if not os.path.isdir(common_dir):
                 continue
             for item in os.listdir(common_dir):
+                from core.tasks import checkpoint
+                checkpoint()
                 game_folder = os.path.join(common_dir, item)
                 if os.path.isdir(game_folder):
                     profile = self.add_game_by_path(game_folder)
@@ -174,6 +175,8 @@ class GameLibrary:
         epic_manifest_dir = r"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests"
         if os.path.isdir(epic_manifest_dir):
             for f in os.listdir(epic_manifest_dir):
+                from core.tasks import checkpoint
+                checkpoint()
                 if f.endswith(".item"):
                     try:
                         with open(os.path.join(epic_manifest_dir, f), "r", encoding="utf-8") as item_file:
@@ -224,7 +227,7 @@ class GameLibrary:
         if not os.path.exists(target_dir):
             return False
         has_ini = os.path.exists(os.path.join(target_dir, "OptiScaler.ini"))
-        hooks = ["dxgi.dll", "nvngx.dll", "version.dll", "winmm.dll", "d3d12.dll", "dbghelp.dll", "wininet.dll", "winhttp.dll"]
+        hooks = HOOKS
         has_hook = any(os.path.exists(os.path.join(target_dir, h)) for h in hooks)
         return has_ini and has_hook and SafetyManager.has_active_backup(target_dir)
 

@@ -29,5 +29,11 @@ class UIDispatcher:
         self.timer = self.root.after(25, self._drain)
 
     def close(self):
+        if self.closed:return
         self.closed = True
         self.root.after_cancel(self.timer)
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break

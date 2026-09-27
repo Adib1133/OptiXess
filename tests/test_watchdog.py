@@ -52,6 +52,9 @@ class WatchdogTests(unittest.TestCase):
             original.write_bytes(b'original')
             SafetyManager.create_pre_injection_snapshot(tmp, ['dxgi.dll'], {})
             original.write_bytes(b'proxy')
+            from core.files import sha256
+            manifest=SafetyManager.load_manifest(tmp)
+            SafetyManager.save_stage(manifest,'deploying',expected={tmp:{'dxgi.dll':sha256(original)}})
             script = folder / 'exit.py'
             script.write_text('raise SystemExit(7)')
             callback = Mock()

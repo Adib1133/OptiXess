@@ -16,8 +16,15 @@ class SafetyManager:
     BACKUP_DIR_NAME = '.optiscaler_backup'
     MANAGED_NAMES = {'dxgi.dll', 'version.dll', 'winmm.dll', 'nvngx.dll', 'd3d12.dll',
                      'dbghelp.dll', 'wininet.dll', 'winhttp.dll', 'optiscaler.dll',
-                     'optiscaler.ini', 'nvngx.ini', 'libxess.dll', 'libxess_dx11.dll',
+                     'optiscaler.asi', 'optiscaler.ini', 'nvngx.ini', 'libxess.dll', 'libxess_dx11.dll',
                      'libxess_fg.dll', 'libxessfg.dll', 'libxell.dll', 'fakenvapi.dll', 'fakenvapi.ini'}
+
+    @staticmethod
+    def managed_name(name):
+        path = Path(name)
+        return (path.name == name and (name.lower() in SafetyManager.MANAGED_NAMES or
+                (path.suffix.lower() in ('.dll', '.ini') and
+                 name.lower().startswith(('libxess', 'libxell', 'fakenvapi')))))
 
     @staticmethod
     def get_file_hash(filepath):
@@ -58,7 +65,7 @@ class SafetyManager:
             if len(names) != len(set(names)):
                 raise ValueError('Duplicate manifest entries.')
             for name in names:
-                if name.lower() not in SafetyManager.MANAGED_NAMES:
+                if not SafetyManager.managed_name(name):
                     raise ValueError(f'Unexpected file in recovery manifest: {name}')
                 safe_path(folder, name)
         return manifest
@@ -73,14 +80,16 @@ class SafetyManager:
                 raise ValueError('Revert the legacy installation before applying a new configuration.')
         else:
             manifest = {'schema': 2, 'timestamp': time.time(), 'primary_dir': str(primary), 'folders': {}}
+        previous_hashes = SafetyManager.deployed_hashes(manifest)
         manifest['metadata'] = metadata
+        manifest['operation'] = {'state': 'backed_up', 'previous': previous_hashes, 'expected': {}}
         backup.mkdir(exist_ok=True)
         for folder, names in target_dirs_files.items():
             folder = str(Path(folder).resolve())
             record = manifest['folders'].setdefault(folder, {'created_files': [], 'overwritten_files': []})
             tracked = set(record['created_files']) | {x['filename'] for x in record['overwritten_files']}
             for name in dict.fromkeys(names):
-                if name.lower() not in SafetyManager.MANAGED_NAMES:
+                if not SafetyManager.managed_name(name):
                     raise ValueError(f'Unsupported deployment filename: {name}')
                 target = safe_path(folder, name)
                 if name in tracked:
@@ -101,11 +110,76 @@ class SafetyManager:
         return manifest
 
     @staticmethod
+    def deployed_hashes(manifest):
+        metadata = manifest.get('metadata', {})
+        hashes = metadata.get('deployed_files')
+        if hashes is None:
+            hashes = {manifest.get('primary_dir', ''): metadata.get('installed_hashes', {})}
+        for folder, entries in hashes.items():
+            if folder not in manifest.get('folders', {}):
+                if not entries:continue
+                raise ValueError('Verification hashes refer to an untracked directory.')
+            for name, digest in entries.items():
+                safe_path(folder, name)
+                if not SafetyManager.managed_name(name) or not isinstance(digest,str) or len(digest)!=64:
+                    raise ValueError('Invalid installed-file verification record.')
+        return hashes
+
+    @staticmethod
+    def save_stage(manifest, state, **updates):
+        manifest.setdefault('operation', {}).update(state=state, **updates)
+        write_json(safe_path(Path(manifest['primary_dir']) / SafetyManager.BACKUP_DIR_NAME, 'manifest.json'), manifest)
+
+    @staticmethod
+    def conflicts(manifest, selection=None):
+        """Only known original/deployed/transaction bytes may be replaced silently."""
+        deployed = SafetyManager.deployed_hashes(manifest)
+        operation = manifest.get('operation', {})
+        found = []
+        for folder, record in manifest['folders'].items():
+            originals = {i['filename']:i['original_hash'] for i in record['overwritten_files']}
+            for name in [*record['created_files'], *originals]:
+                if selection is not None and (folder,name) not in selection:continue
+                path = safe_path(folder,name)
+                if not path.exists():continue
+                allowed = {originals.get(name), deployed.get(folder,{}).get(name)}
+                if operation.get('state') != 'complete':
+                    for key in ('previous','expected'):
+                        allowed.add(operation.get(key,{}).get(folder,{}).get(name))
+                allowed.add(manifest.get('preserved_hashes',{}).get(folder,{}).get(name))
+                if not path.is_file() or sha256(path) not in allowed:
+                    found.append(str(path))
+        return found
+
+    @staticmethod
+    def preserve_conflicts(manifest):
+        paths = SafetyManager.conflicts(manifest)
+        copies = []
+        backup = Path(manifest['primary_dir']) / SafetyManager.BACKUP_DIR_NAME
+        for path in paths:
+            path = Path(path)
+            if not path.is_file():raise ValueError('Cannot preserve a non-file conflict: '+str(path))
+            digest = sha256(path)
+            token = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+            dest = safe_path(backup, f'preserved/{token}-{digest}/{path.name}')
+            atomic_write(dest, source=path)
+            if sha256(dest)!=digest or sha256(path)!=digest:raise OSError('File changed while preserving: '+str(path))
+            manifest.setdefault('preserved_hashes',{}).setdefault(str(path.parent),{})[path.name]=digest
+            copies.append({'original':str(path),'copy':str(dest),'sha256':digest})
+        if copies:
+            manifest.setdefault('preserved_files',[]).extend(copies)
+            write_json(safe_path(backup,'preserved/index.json'),manifest['preserved_files'])
+            write_json(safe_path(backup,'manifest.json'),manifest)
+        return copies
+
+    @staticmethod
     def create_pre_injection_snapshot(target_dir, planned_files, metadata):
         return SafetyManager.create_multi_dir_snapshot({target_dir: planned_files}, metadata, target_dir)
 
     @staticmethod
     def restore_files(manifest, selection=None):
+        conflicts = SafetyManager.conflicts(manifest, selection)
+        if conflicts:raise ValueError('Files changed outside ArcScaler; preserve them before recovery: '+', '.join(conflicts))
         removed, restored = [], []
         for folder, record in manifest['folders'].items():
             for name in record['created_files']:
@@ -126,7 +200,7 @@ class SafetyManager:
         return removed, restored
 
     @staticmethod
-    def rollback(target_dir, additional_dirs=None, _locked=False):
+    def rollback(target_dir, additional_dirs=None, _locked=False, preserve_changes=False):
         try:
             if not _locked:
                 with ExitStack() as stack:
@@ -136,10 +210,15 @@ class SafetyManager:
                     from core.injector import Injector
                     if any(Injector.process_in_directory('', d) for d in directories):
                         raise RuntimeError('Game processes are active. Close the game before recovery.')
-                    return SafetyManager.rollback(target_dir, additional_dirs, _locked=True)
+                    return SafetyManager.rollback(target_dir, additional_dirs, _locked=True, preserve_changes=preserve_changes)
             if not SafetyManager.has_active_backup(target_dir):
                 return {'success': False, 'error': 'No recovery manifest found. No game files were removed.'}
             manifest = SafetyManager.load_manifest(target_dir, additional_dirs)
+            conflicts = SafetyManager.conflicts(manifest)
+            if conflicts and not preserve_changes:
+                return {'success':False,'error':'Files have changed outside ArcScaler. Originals and current files retained.', 'conflicts':conflicts}
+            preserved = SafetyManager.preserve_conflicts(manifest) if conflicts else []
+            SafetyManager.save_stage(manifest, 'restoring')
             removed, restored = SafetyManager.restore_files(manifest)
             backup = Path(target_dir) / SafetyManager.BACKUP_DIR_NAME
             retired = backup / 'completed.json'
@@ -157,7 +236,7 @@ class SafetyManager:
                         pass
             except OSError as exc:
                 warning = f' Recovery cleanup pending: {exc}'
-            return {'success': True, 'removed': removed, 'restored': restored,
+            return {'success': True, 'removed': removed, 'restored': restored, 'preserved':preserved,
                     'message': f'Restored {len(restored)} original files; removed {len(removed)} managed files.' + warning}
         except Exception as exc:
             return {'success': False, 'error': f'Recovery incomplete; backups retained. {exc}'}

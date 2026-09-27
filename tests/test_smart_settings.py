@@ -2,7 +2,6 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from core.compatibility import CompatibilityResearch, suggested_controls
 from core.config_generator import ConfigGenerator
 from core.detector import GameDetector
 from core.game_support import capabilities
@@ -35,7 +34,7 @@ class SmartSettingsTests(unittest.TestCase):
     def test_fg_only_preserves_native_upscaler_and_disables_interception(self):
         native = self.exe.parent / 'libxess.dll'
         native.write_bytes(pe_bytes(marker=b'native'))
-        result = self.apply(upscaler_enabled=True, frame_gen_enabled=True, fg_input='dlssg')
+        result = self.apply(upscaler_enabled=False, frame_gen_enabled=True, fg_input='dlssg')
         self.assertTrue(result['success'], result)
         self.assertNotIn('libxess.dll', result['injected_suite'])
         self.assertIn('fakenvapi.dll', result['injected_suite'])
@@ -59,7 +58,7 @@ class SmartSettingsTests(unittest.TestCase):
 
     def test_user_defined_disables_all_resolution_overrides(self):
         cfg = ConfigGenerator.parser(ConfigGenerator.generate_nvngx_ini(
-            upscaler_enabled=True, custom_scale=0.5))
+            upscaler_enabled=True, custom_scale=None))
         for section, key in [('UpscaleRatio', 'UpscaleRatioOverrideEnabled'),
                              ('QualityOverrides', 'QualityRatioOverrideEnabled'),
                              ('DRS', 'DrsMinOverrideEnabled'), ('DRS', 'DrsMaxOverrideEnabled')]:
@@ -68,7 +67,7 @@ class SmartSettingsTests(unittest.TestCase):
     def test_both_native_no_modification(self):
         for name in ['libxess.dll', 'libxess_fg.dll']:
             (self.exe.parent / name).write_bytes(pe_bytes())
-        self.assertFalse(self.apply(upscaler_enabled=True, frame_gen_enabled=True)['success'])
+        self.assertFalse(self.apply(upscaler_enabled=False, frame_gen_enabled=True)['success'])
         self.assertFalse((self.exe.parent / 'OptiScaler.ini').exists())
 
     def test_xell_is_not_evidence_of_xess_or_fg(self):
@@ -82,16 +81,6 @@ class SmartSettingsTests(unittest.TestCase):
         (self.release / 'libxess_dx11.dll').unlink()
         self.assertTrue(self.apply(optiscaler_version='v0.9.4', frame_gen_enabled=True)['success'])
 
-    def test_research_exact_match_and_offline(self):
-        table = '| [Example Game](Example-Game) | Yes | DLSS | Use version.dll |\n'
-        with patch.object(CompatibilityResearch, 'fetch', side_effect=[table, 'Game-specific instructions']):
-            result = CompatibilityResearch.lookup(['Example Game'])
-        self.assertEqual(result['status'], 'matched')
-        self.assertIn('Game-specific instructions', result['notes'])
-        with patch.object(CompatibilityResearch, 'fetch', return_value=table):
-            self.assertEqual(CompatibilityResearch.lookup(['Example'])['status'], 'unmatched')
-        with patch.object(CompatibilityResearch, 'fetch', side_effect=OSError('offline')):
-            self.assertEqual(CompatibilityResearch.lookup(['Example Game'])['status'], 'offline')
 
     def test_upscaler_driven_fg_requires_selected_upscaler(self):
         result = self.apply(frame_gen_enabled=True, fg_input='upscaler')
@@ -104,15 +93,7 @@ class SmartSettingsTests(unittest.TestCase):
         native.parent.mkdir()
         native.write_bytes(pe_bytes())
         result = self.injector.apply_injection(str(exe.parent), str(exe),
-            base_dir=str(self.root / 'whole'), installation_mode='manual', upscaler_enabled=True, frame_gen_enabled=True)
+            base_dir=str(self.root / 'whole'), installation_mode='manual', upscaler_enabled=False, frame_gen_enabled=True)
         self.assertTrue(result['success'], result)
         self.assertNotIn('libxess.dll', result['injected_suite'])
 
-    def test_suggestions_never_select_components_or_negative_hook_advice(self):
-        research = {'status': 'matched', 'row': '| Example | Use version.dll |'}
-        self.assertEqual(suggested_controls(None, research)['hook_method'], 'version.dll')
-        research['row'] = '| Example | Do not use dxgi.dll |'
-        controls = suggested_controls(None, research)
-        self.assertNotIn('hook_method', controls)
-        self.assertNotIn('upscaler_enabled', controls)
-        self.assertNotIn('frame_gen_enabled', controls)

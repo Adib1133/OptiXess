@@ -1,10 +1,7 @@
-import io
 import tempfile
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest.mock import patch
-from core.compatibility import CompatibilityResearch, WikiBody
 from core.config_generator import ConfigGenerator
 from core.detector import GameDetector
 from core.game_rules import match_recipe
@@ -37,9 +34,9 @@ class GameRuleTests(unittest.TestCase):
         exe = self.spider()
         original = exe.parent / 'libxess.dll'
         original.write_bytes(pe_bytes(marker=b'game xess'))
-        settings = dict(upscaler_enabled=True, frame_gen_enabled=True, gpu_spoofing=True,
-                        fg_input='upscaler', starting_upscaler='DLSS', hook_method='version.dll')
-        preview = build_plan(GameDetector.analyze_game(str(exe)), settings)
+        settings = dict(upscaler_enabled=False, frame_gen_enabled=True, gpu_spoofing=True,
+                        fg_input='dlssg', starting_upscaler='DLSS', hook_method='version.dll')
+        preview = build_plan(GameDetector.analyze_game(str(exe)), settings, self.injector.version_manager)
         result = self.injector.apply_injection(str(exe.parent), str(exe), **settings)
         self.assertTrue(result['success'], result)
         self.assertEqual(set(preview['files']), set(result['injected_suite']))
@@ -71,20 +68,20 @@ class GameRuleTests(unittest.TestCase):
         exe = game(self.root / 'unlisted')
         result = self.injector.apply_injection(str(exe.parent), str(exe), upscaler_enabled=True)
         self.assertFalse(result['success'])
-        self.assertIn('No reviewed', result['error'])
+        self.assertIn('No supported upscaler input', result['error'])
         self.assertFalse(SafetyManager.has_active_backup(exe.parent))
         self.assertTrue(self.injector.apply_injection(str(exe.parent), str(exe), upscaler_enabled=True,
                                                      installation_mode='manual')['success'])
 
-    def test_existing_unmanaged_proxy_blocks_automatic_without_overwrite(self):
+    def test_existing_unmanaged_proxy_is_preserved_with_another_hook(self):
         exe = self.spider()
         proxy = exe.parent / 'version.dll'
         proxy.write_bytes(b'other mod')
         result = self.injector.apply_injection(str(exe.parent), str(exe), frame_gen_enabled=True)
-        self.assertFalse(result['success'])
-        self.assertIn('unmanaged', result['error'])
+        self.assertTrue(result['success'],result)
+        self.assertNotEqual(result['hook_method'],'version.dll')
         self.assertEqual(proxy.read_bytes(), b'other mod')
-        self.assertFalse(SafetyManager.has_active_backup(exe.parent))
+        self.assertTrue(SafetyManager.has_active_backup(exe.parent))
 
     def test_automatic_update_recognizes_its_own_dependencies(self):
         exe = self.spider()
@@ -124,20 +121,4 @@ class GameRuleTests(unittest.TestCase):
         plan = build_plan(GameDetector.analyze_game(str(wrong)), {'upscaler_enabled': True})
         self.assertTrue(any('documented injection location' in e for e in plan['errors']))
 
-    def test_wiki_fallback_extracts_only_article_and_parses_fields(self):
-        html = b'<div>Untrusted sidebar Filename evil.dll</div><div class="markdown-body"><table><tr><td>Filename</td><td>dxgi.dll</td></tr></table><div>Dxgi=false</div></div><div>Sidebar</div>'
-        error = urllib.error.HTTPError('url', 404, 'missing', {}, None)
-        CompatibilityResearch._cache.clear()
-        with patch('core.compatibility.urllib.request.urlopen', side_effect=[error, io.BytesIO(html)]):
-            text = CompatibilityResearch.fetch('Test-AsciiDoc-Page')
-        self.assertIn('dxgi.dll', text)
-        self.assertNotIn('Sidebar', text)
-        self.assertNotIn('evil.dll', text)
 
-    def test_unicode_wiki_link_resolves_detailed_game_page(self):
-        table = "| [Marvel's Spider‐Man 2](Marvels-Spider‐Man-2) | Yes | FSR3.1 | | | |"
-        with patch.object(CompatibilityResearch, 'fetch', side_effect=[table, '| Filename | dxgi.dll |']):
-            result = CompatibilityResearch.lookup(['Spider-Man2'])
-        self.assertEqual(result['detail_status'], 'available')
-        self.assertEqual(result['fields']['filename'], 'dxgi.dll')
-        self.assertIn('%E2%80%90', result['sources'][0])

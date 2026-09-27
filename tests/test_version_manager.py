@@ -108,3 +108,15 @@ class VersionTests(unittest.TestCase):
         with operation_lock(self.vm.versions_dir):
             self.vm._recover_commit('v0.9.4')
         self.assertTrue(self.vm.is_version_valid('v0.9.4'))
+
+    def test_cancel_before_commit_retains_existing_release(self):
+        import threading
+        payload=self.archive();self.assertTrue(self.install(payload)['success'])
+        before=sha256(self.root/'versions/v0.9.4/OptiScaler.dll')
+        cancel=threading.Event()
+        def progress(value,text):
+            if value>=.8:cancel.set()
+        with patch('core.version_manager.urllib.request.urlopen',return_value=io.BytesIO(payload)):
+            result=self.vm.download_and_install_version(self.release(payload),progress,cancel)
+        self.assertFalse(result['success']);self.assertIn('cancelled',result['error'])
+        self.assertEqual(sha256(self.root/'versions/v0.9.4/OptiScaler.dll'),before)

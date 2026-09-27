@@ -1,7 +1,6 @@
 """Per-game proxy deployment. File installation does not prove runtime activation."""
 from contextlib import ExitStack
 import configparser
-from io import StringIO
 import os
 from pathlib import Path
 import psutil
@@ -10,8 +9,8 @@ from core.safety import SafetyManager
 from core.config_generator import ConfigGenerator
 from core.version_manager import VersionManager
 from core.detector import GameDetector
-from core.game_support import capabilities
 from core.install_plan import build_plan
+from core.settings import HOOKS, validate, SCHEMA
 
 
 def _merge_ini(old_text, new_text):
@@ -38,8 +37,7 @@ def _merge_ini(old_text, new_text):
 
 
 class Injector:
-    DEFAULT_HOOKS = ['dxgi.dll', 'version.dll', 'winmm.dll', 'nvngx.dll',
-                     'd3d12.dll', 'dbghelp.dll', 'wininet.dll', 'winhttp.dll']
+    DEFAULT_HOOKS = HOOKS
 
     def __init__(self, assets_dir=None):
         self.assets_dir = str(assets_dir or Path(__file__).resolve().parents[1] / 'assets')
@@ -76,7 +74,7 @@ class Injector:
                         intercept_fsr3=False, reflex_to_xell_enabled=False, reflex_boost=False,
                         xess_network_model=None, sharpness=0.3, custom_scale=None, invert_depth=None,
                         jitter_cancellation=None, fg_input=None, base_dir=None, upscaler_enabled=False,
-                        gpu_spoofing=False, installation_mode='automatic', force=False):
+                        gpu_spoofing=False, installation_mode='automatic', force=False, compatibility_path=None, hardware=None, expected_plan=None):
         """Deploy OptiScaler into a game directory.
 
         force=True bypasses plan validation errors, skips the unmanaged-proxy block,
@@ -84,8 +82,7 @@ class Injector:
         OptiScaler.ini is always injected; existing user edits are preserved.
         """
         try:
-            if not upscaler_enabled and not frame_gen_enabled:
-                raise ValueError('Select XeSS upscaling, XeSS Frame Generation, or both before installing.')
+            requested = validate({k:v for k,v in locals().items() if k in SCHEMA and not (k in ('fg_input', 'optiscaler_version') and v is None)}, require_mode=True)
             primary = Path(target_dir).resolve()
             exe = Path(target_exe).resolve()
             if not primary.is_dir() or exe.parent != primary or exe.suffix.lower() != '.exe':
@@ -122,14 +119,17 @@ class Injector:
                 analysis['discovered_locations'], analysis['detected_upscalers'] = (
                     GameDetector._deep_scan_upscalers(str(root), str(primary)))
                 analysis['all_target_dirs'] = list(dirs.values())
+                analysis['anti_cheat'] = GameDetector._detect_anti_cheat(str(primary), str(root))
                 resolved_input = fg_input or (
                     'dlssg' if intercept_dlssg else 'fsrfg' if intercept_fsr3 else 'upscaler')
-                deployment = build_plan(analysis, dict(
-                    installation_mode=installation_mode,
-                    upscaler_enabled=upscaler_enabled, frame_gen_enabled=frame_gen_enabled,
-                    starting_upscaler=starting_upscaler, hook_method=hook_method,
-                    fg_input=resolved_input, gpu_spoofing=gpu_spoofing,
-                    reflex_to_xell_enabled=reflex_to_xell_enabled, force=force))
+                deployment = build_plan(analysis, dict(requested,
+                    fg_input=resolved_input, force=force, optiscaler_version=active,
+                    compatibility_path=compatibility_path, hardware=hardware or {}), self.version_manager)
+                if expected_plan and any(deployment.get(key) != expected_plan.get(key)
+                                         for key in ('target_dir','files','settings','source_hashes','ini_overrides')):
+                    raise ValueError('The installation plan changed. Review a fresh preview before installing.')
+                if frame_gen_enabled and analysis.get('graphics_api') != 'DX12':
+                    raise ValueError('Frame Generation requires detected DirectX 12.')
                 if deployment['errors'] and not force:
                     return {'success': False, 'error': chr(10).join(deployment['errors']), 'plan': deployment}
                 if deployment['errors'] and force:
@@ -167,6 +167,8 @@ class Injector:
                     upscaler_enabled=upscaler_enabled, gpu_spoofing=gpu_spoofing)
                 if existing_ini:
                     config = _merge_ini(existing_ini, config)
+                if deployment.get('ini_overrides'):
+                    config = ConfigGenerator.update_ini_text(config, deployment['ini_overrides'])
 
                 # ── File map: OptiScaler.dll deployed under the chosen proxy filename ────
                 # e.g. hook_method='winmm.dll' creates winmm.dll in the game folder.
@@ -193,14 +195,27 @@ class Injector:
                     'recipe_id': deployment['recipe_id'],
                     'rule_reviewed': deployment['reviewed'],
                     'effective_settings': effective,
+                    'installed_mode': 'sr+fg' if upscaler_enabled and frame_gen_enabled else 'fg' if frame_gen_enabled else 'sr',
+                    'requested_settings': dict(requested,optiscaler_version=active),
                     'sources': deployment['sources'],
                     'additional_dirs': [d for d in dirs.values()
                                         if canonical(d) != canonical(primary)],
                     'force_injected': force,
                 }
+                if SafetyManager.has_active_backup(primary):
+                    old_manifest = SafetyManager.load_manifest(primary, list(dirs.values()))
+                    if old_manifest.get('schema')!=2:raise ValueError('Restore the legacy installation before installing again.')
+                    if old_manifest.get('operation',{}).get('state') not in (None,'complete'):
+                        raise ValueError('An interrupted operation needs recovery before installing again.')
+                    conflicts = SafetyManager.conflicts(old_manifest)
+                    if conflicts:
+                        return {'success':False,'error':'Externally modified files need review. Restore original files with preservation before reinstalling.', 'conflicts':conflicts}
                 # No game mutation before snapshot success.
                 manifest = SafetyManager.create_multi_dir_snapshot(plan, metadata, str(primary))
                 try:
+                    import hashlib
+                    expected_hashes = {name:hashlib.sha256(source).hexdigest() if isinstance(source,bytes) else sha256(source) for name,source in files.items()}
+                    SafetyManager.save_stage(manifest, 'deploying', expected={folder:dict(expected_hashes) for folder in dirs.values()})
                     self._check_processes(target_exe, dirs.values())
                     stale = {
                         (folder, name)
@@ -225,6 +240,12 @@ class Injector:
                                 atomic_write(dest, source=source)
                                 if sha256(dest) != expected:
                                     raise OSError(f'Deployment verification failed: {dest}')
+                    SafetyManager.save_stage(manifest, 'verifying')
+                    manifest['metadata']['deployed_files'] = {folder:{name:sha256(safe_path(folder,name)) for name in files} for folder in dirs.values()}
+                    if any(hashes != expected_hashes for hashes in manifest['metadata']['deployed_files'].values()):
+                        raise OSError('Final installed hashes do not match the planned files.')
+                    manifest['metadata']['installed_hashes'] = manifest['metadata']['deployed_files'][str(primary)]
+                    SafetyManager.save_stage(manifest, 'complete')
                 except Exception as exc:
                     try:
                         self._check_processes(target_exe, dirs.values())
@@ -252,11 +273,16 @@ class Injector:
         except Exception as exc:
             return {'success': False, 'error': str(exc)}
 
+    def verify_installation(self, target_dir, additional_dirs=None):
+        from core.installation_state import installation_health
+        health=installation_health(target_dir, additional_dirs)
+        return dict(health, success=health['state']=='installed', error=health['message'])
+
     def _check_processes(self, exe, dirs):
         if any(self.is_game_running(exe, d) for d in dirs):
             raise RuntimeError('A game process is running. Close the game before modifying files.')
 
-    def revert_injection(self, target_dir, target_exe='', additional_dirs=None, all_target_dirs=None):
+    def revert_injection(self, target_dir, target_exe='', additional_dirs=None, all_target_dirs=None, preserve_changes=False):
         try:
             dirs = {canonical(d): str(Path(d).resolve())
                     for d in [target_dir, *(additional_dirs or []), *(all_target_dirs or [])]}
@@ -264,7 +290,7 @@ class Injector:
                 for d in sorted(dirs.values(), key=canonical):
                     stack.enter_context(operation_lock(d))
                 self._check_processes(target_exe, dirs.values())
-                return SafetyManager.rollback(target_dir, list(dirs.values()), _locked=True)
+                return SafetyManager.rollback(target_dir, list(dirs.values()), _locked=True, preserve_changes=preserve_changes)
         except Exception as exc:
             return {'success': False, 'error': str(exc)}
 

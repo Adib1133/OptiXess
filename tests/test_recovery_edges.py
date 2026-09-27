@@ -32,7 +32,8 @@ class RecoveryEdges(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertIn('legacy', result['error'])
         self.assertEqual(original.read_bytes(), b'vanilla')
-        self.assertTrue(self.injector.revert_injection(str(self.folder))['success'])
+        self.assertFalse(self.injector.revert_injection(str(self.folder))['success'])
+        self.assertTrue(self.injector.revert_injection(str(self.folder),preserve_changes=True)['success'])
         self.assertEqual((self.folder / 'dxgi.dll').read_bytes(), b'vanilla')
 
     def test_manifest_cannot_delete_game_executable(self):

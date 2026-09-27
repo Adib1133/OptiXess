@@ -22,7 +22,7 @@ class CoreTests(unittest.TestCase):
         self.injector = Injector(self.root / 'assets')
 
     def apply(self, **kw):
-        kw.setdefault('upscaler_enabled', True)
+        kw.setdefault('upscaler_enabled', not kw.get('frame_gen_enabled',False))
         kw.setdefault('installation_mode', 'manual')
         return self.injector.apply_injection(str(self.folder), str(self.exe), **kw)
 
@@ -34,7 +34,7 @@ class CoreTests(unittest.TestCase):
                 result = self.apply(hook_method=hook, frame_gen_enabled=True, fg_input='dlssg')
                 self.assertTrue(result['success'], result)
                 self.assertEqual((self.folder / hook).read_bytes(), (self.version / 'OptiScaler.dll').read_bytes())
-                self.assertTrue((self.folder / 'libxess_dx11.dll').is_file())
+                self.assertFalse((self.folder / 'libxess_dx11.dll').is_file())
                 if hook != 'nvngx.dll':
                     self.assertFalse((self.folder / 'nvngx.dll').exists())
                 result = self.injector.revert_injection(str(self.folder))
@@ -146,7 +146,7 @@ class CoreTests(unittest.TestCase):
         for source in ('DLSS', 'FSR'):
             for fg in ConfigGenerator.FG_INPUTS:
                 generated = ConfigGenerator.generate_nvngx_ini(starting_upscaler=source, fg_input=fg,
-                    frame_gen_enabled=True, custom_scale=0.5, upscaler_enabled=True, xess_quality='Quality')
+                    frame_gen_enabled=True, custom_scale=0.5, upscaler_enabled=False, xess_quality='Quality')
                 cfg = ConfigGenerator.parser(generated)
                 self.assertEqual(cfg['FrameGen']['FGInput'], fg)
                 self.assertEqual(cfg['FrameGen']['FGOutput'], 'xefg')

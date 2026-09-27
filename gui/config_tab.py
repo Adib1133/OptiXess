@@ -1,15 +1,14 @@
 """Release-backed controls and asynchronous per-game deployment workflows."""
 import os
 import threading
-import webbrowser
 from pathlib import Path
-from core.compatibility import CompatibilityResearch, suggested_controls
 from core.detector import GameDetector
-from core.game_support import capabilities, describe
+from core.game_support import capabilities
 from core.install_plan import build_plan, format_plan
-from core.game_rules import recipe_for, identity_names
 from tkinter import messagebox
 import customtkinter as ctk
+from gui.theme import divider
+from gui.theme import ContentFrame
 from core.config_generator import ConfigGenerator
 from core.safety import SafetyManager, CrashWatchdog
 from gui.dispatch import UIDispatcher
@@ -28,138 +27,316 @@ class ConfigTab(ctk.CTkFrame):
         self._loading = False
         self._analysis = None
         self.preview_plan = None
+        self.workers = []
+        from core.tasks import TaskManager
+        self.tasks = TaskManager(self.dispatcher, workers=2)
+        self.recommendation = None
+        self.health = None
+        self._evidence = None
+        self._plan_timer = None
+        self._view_timer = None
+        self._scan_pending = False
+        self._closed = False
         self._build_ui()
 
     def _build_ui(self):
-        scroll = ctk.CTkScrollableFrame(self, fg_color='#0B1220')
-        scroll.pack(fill='both', expand=True, padx=12, pady=12)
-        self.title_lbl = ctk.CTkLabel(scroll, text='Select a game from the library', font=ctk.CTkFont(size=20, weight='bold'))
-        self.title_lbl.pack(anchor='w')
-        self.info_lbl = ctk.CTkLabel(scroll, text='', wraplength=850, justify='left')
-        self.info_lbl.pack(anchor='w')
-        self.status_lbl = ctk.CTkLabel(scroll, text='Configuration preview — runtime activation is checked in the game overlay.', text_color='#00C7FD')
-        self.status_lbl.pack(anchor='w', pady=8)
-        self.suggestions = ctk.CTkFrame(scroll, fg_color='#10243A', border_color='#0071C5', border_width=1, corner_radius=12)
-        self.suggestions.pack(fill='x', pady=12)
-        ctk.CTkLabel(self.suggestions, text='01  Suggested Settings', text_color='#00C7FD', font=ctk.CTkFont(size=18, weight='bold')).pack(anchor='w', padx=16, pady=(12, 4))
-        self.suggest_text = ctk.CTkTextbox(self.suggestions, height=145, wrap='word', fg_color='#10243A')
-        self.suggest_text.pack(fill='x', padx=12, pady=6)
-        self.sources_bar = ctk.CTkFrame(self.suggestions, fg_color='transparent')
-        self.sources_bar.pack(fill='x', padx=12, pady=(0, 12))
-        self.research = None
-        self.support = None
-        self.research_generation = 0
-        self.upscaler_var = ctk.BooleanVar(value=True)
-        self.frame_gen_var = ctk.BooleanVar(value=False)
-        ctk.CTkLabel(scroll, text='02  Choose components', font=ctk.CTkFont(size=18, weight='bold'), text_color='#00C7FD').pack(anchor='w', pady=(12, 6))
-        for label, var in [('Install XeSS upscaling', self.upscaler_var), ('Install XeSS Frame Generation (DX12)', self.frame_gen_var)]:
-            ctk.CTkCheckBox(scroll, text=label, variable=var, command=self._on_pipeline_param_changed).pack(anchor='w', pady=8)
-        self.plan_lbl = ctk.CTkLabel(scroll, text='Choose at least one component to preview installation.', wraplength=850, justify='left')
-        self.plan_lbl.pack(anchor='w', pady=8)
-        ctk.CTkLabel(scroll, text='03  Installation settings', font=ctk.CTkFont(size=18, weight='bold'), text_color='#00C7FD').pack(anchor='w', pady=(12, 6))
-
-        def menu(label, variable, values):
-            row = ctk.CTkFrame(scroll, fg_color='#121E30', corner_radius=8)
-            row.pack(fill='x', pady=4)
-            ctk.CTkLabel(row, text=label, width=250, anchor='w').pack(side='left', padx=10)
-            widget = ctk.CTkOptionMenu(row, variable=variable, values=values, width=250,
-                                       command=self._on_pipeline_param_changed)
-            widget.pack(side='left', padx=8, pady=6)
+        from gui.theme import BG,PANEL,BORDER,MUTED,BLUE,label,button,card
+        from core.settings import SCHEMA
+        import tkinter as tk
+        self.configure(fg_color=BG,corner_radius=0)
+        self.variables={}
+        for key,spec in SCHEMA.items():
+            value='auto' if spec.default is None else spec.default
+            self.variables[key]=(ctk.BooleanVar(value=value) if spec.kind is bool and spec.default is not None else ctk.StringVar(value=str(value)))
+        aliases={'mode_var':'installation_mode','version_var':'optiscaler_version','hook_var':'hook_method',
+                 'quality_var':'xess_quality','upscaler_var':'upscaler_enabled','frame_gen_var':'frame_gen_enabled',
+                 'spoof_var':'gpu_spoofing','reflex_var':'reflex_to_xell_enabled','fg_input_var':'fg_input',
+                 'starting_upscaler_var':'starting_upscaler','model_var':'xess_network_model',
+                 'invert_depth_var':'invert_depth','jitter_var':'jitter_cancellation'}
+        for alias,key in aliases.items():setattr(self,alias,self.variables[key])
+        self.custom_scale_enabled_var=ctk.BooleanVar(value=False)
+        bar=ctk.CTkFrame(self,fg_color=PANEL,corner_radius=0)
+        bar.pack(side='bottom',fill='x')
+        divider(bar).pack(fill='x')
+        self.action_hint_lbl=label(bar,'Select a game to configure.',muted=True,anchor='w',wraplength=480,justify='left')
+        self.action_hint_lbl.pack(fill='x',padx=18,pady=(3,0))
+        actions=ctk.CTkFrame(bar,fg_color='transparent');actions.pack(fill='x',padx=18,pady=(3,12))
+        self.revert_btn=button(actions,'Restore original files',self.revert_changes,width=150)
+        self.force_btn=button(actions,'Force inject',self.force_injection,width=100)
+        self.progress=ctk.CTkProgressBar(bar,height=3,mode='indeterminate');self.progress.pack(fill='x');self.progress.set(0)
+        self.apply_btn=button(actions,'Install to game',self.apply_injection,primary=True,width=110);self.apply_btn.pack(side='right')
+        self.launch_btn=button(actions,'Launch',self.launch_and_protect,width=95);self.launch_btn.pack(side='right',padx=8)
+        self.draft_lbl=label(actions,'Draft saved',muted=True);self.draft_lbl.pack(side='left')
+        self.scroll=ContentFrame(self,fg_color=BG,corner_radius=0)
+        self.scroll.pack(fill='both',expand=True)
+        header=ctk.CTkFrame(self.scroll,fg_color='transparent');header.pack(fill='x',padx=22,pady=(20,14))
+        self.game_icon=label(header,'',width=48,height=48);self.game_icon.pack(side='left',padx=(0,12))
+        heading=ctk.CTkFrame(header,fg_color='transparent');heading.pack(side='left',fill='x',expand=True)
+        self.title_lbl=label(heading,'Select a game',wraplength=300,justify='left');self.title_lbl.configure(font=ctk.CTkFont(size=22,weight='bold'));self.title_lbl.pack(anchor='w')
+        self.info_lbl=label(heading,'Add a game from the library.',muted=True,anchor='w');self.info_lbl.pack(anchor='w')
+        self.menu_button=button(header,'More',self._game_menu,width=60)
+        self.menu_button.pack(side='right')
+        overview=ctk.CTkFrame(self.scroll,fg_color='transparent');overview.pack(fill='x',padx=22,pady=(0,12))
+        status=ctk.CTkFrame(overview,fg_color=PANEL,border_color=BORDER,border_width=1,corner_radius=14);status.pack(side='left')
+        self.status_lbl=label(status,'●  Not installed');self.status_lbl.configure(text_color='#FF7887');self.status_lbl.pack(padx=10)
+        self.controls={}
+        self.health_lbl=label(self.scroll,'',muted=True,wraplength=480,justify='left',anchor='w');self.health_lbl.pack(fill='x',padx=22,pady=(0,8))
+        self.recovery_btn=button(self.scroll,'Review recovery / restore originals',self.revert_changes)
+        self.section_switches=[]
+        self.section_notes={}
+        def section(title,subtitle,variable,mode):
+            box=card(self.scroll);box.pack(fill='x',padx=22,pady=(0,14))
+            top=ctk.CTkFrame(box,fg_color='transparent');top.pack(fill='x',padx=18,pady=14)
+            titles=ctk.CTkFrame(top,fg_color='transparent');titles.pack(side='left')
+            title_widget=label(titles,title);title_widget.configure(font=ctk.CTkFont(size=14,weight='bold'));title_widget.pack(anchor='w')
+            note=label(titles,subtitle,muted=True,wraplength=300,justify='left');note.pack(anchor='w')
+            self.section_notes[mode]=note
+            switch=ctk.CTkSwitch(top,text='On',width=60,variable=variable,progress_color=BLUE,command=lambda:self._toggle_mode(mode))
+            switch.pack(side='right');self.section_switches.append(switch)
+            divider(box).pack(fill='x')
+            body=ctk.CTkFrame(box,fg_color='transparent');body.pack(fill='x',padx=18,pady=16)
+            return body
+        suggestions=card(self.scroll);suggestions.pack(fill='x',padx=22,pady=(0,14))
+        heading=label(suggestions,'Suggested preset');heading.configure(font=ctk.CTkFont(size=15,weight='bold'));heading.pack(anchor='w',padx=18,pady=(14,4))
+        self.suggestion_lbl=label(suggestions,'Select a game to see recommendations.',muted=True,wraplength=470,justify='left')
+        self.suggestion_lbl.pack(anchor='w',padx=18,pady=6)
+        self.suggest_btn=button(suggestions,'Apply suggestion to draft',self._use_suggestions)
+        self.suggest_btn.pack(anchor='w',padx=18,pady=(4,14))
+        self.sr_body=section('Super Resolution','Improve image detail with XeSS',self.upscaler_var,'upscaler_enabled')
+        self.gauge=tk.Canvas(self.sr_body,width=135,height=155,bg=PANEL,highlightthickness=0)
+        self.gauge.pack(side='left',anchor='n',padx=(0,12))
+        options=ctk.CTkFrame(self.sr_body,fg_color='transparent');options.pack(side='left',fill='x',expand=True)
+        self.sr_options=options
+        def menu(parent,key):
+            spec=SCHEMA[key]
+            row=ctk.CTkFrame(parent,fg_color='transparent');row.pack(fill='x',pady=6)
+            label(row,spec.label).pack(side='left')
+            values=['auto' if v is None else str(v).lower() if type(v) is bool else str(v) for v in spec.options]
+            widget=ctk.CTkOptionMenu(row,variable=self.variables[key],values=values or ['No installed releases'],
+                width=145,height=30,corner_radius=12,fg_color='#24364B',button_color='#2D435C',button_hover_color=BORDER,
+                command=self._on_pipeline_param_changed)
+            widget.pack(side='right');self.controls[key]=widget
             return widget
+        menu(options,'xess_quality')
+        self.quality_segments=ctk.CTkSegmentedButton(options,
+            values=[v for v in SCHEMA['xess_quality'].options if v in ('Ultra Quality','Quality','Balanced','Performance')],
+            variable=self.quality_var,command=self._on_pipeline_param_changed,
+            selected_color='#365E85',unselected_color='#202E40',corner_radius=10,font=ctk.CTkFont(size=11))
+        self.quality_segments.pack(fill='x',pady=(0,8))
+        self.sr_details_button=button(options,'Fine-tune resolution and sharpness',lambda:self._toggle_panel(self.sr_details))
+        self.sr_details_button.pack(fill='x',pady=8)
+        self.sr_details=ctk.CTkFrame(options,fg_color='transparent')
+        options=self.sr_details
+        ctk.CTkSwitch(options,text='Custom render scale',variable=self.custom_scale_enabled_var,
+            command=self._on_pipeline_param_changed,progress_color=BLUE).pack(anchor='w',pady=10)
+        self.scale_val_lbl=label(options,'Render scale',muted=True,anchor='w');self.scale_val_lbl.pack(fill='x')
+        self.scale_slider=ctk.CTkSlider(options,from_=.25,to=1,progress_color=BLUE,command=self._on_scale_slider)
+        self.scale_slider.set(.67);self.scale_slider.pack(fill='x',pady=8)
+        self.sharpness_val_lbl=label(options,'Sharpness',muted=True,anchor='w');self.sharpness_val_lbl.pack(fill='x')
+        self.sharpness_slider=ctk.CTkSlider(options,from_=0,to=1,progress_color=BLUE,command=self._on_sharpness_slider)
+        self.sharpness_slider.set(.3);self.sharpness_slider.pack(fill='x',pady=8)
+        menu(options,'starting_upscaler')
+        label(options,'Hardware is chosen automatically',muted=True).pack(anchor='w')
+        self.fg_body=section('Frame Generation','DirectX 12 only',self.frame_gen_var,'frame_gen_enabled')
+        menu(self.fg_body,'fg_input')
+        self.fg_description=label(self.fg_body,'',muted=True,wraplength=480,justify='left');self.fg_description.pack(anchor='w',pady=6)
+        evidence=card(self.scroll);evidence.pack(fill='x',padx=22,pady=(0,14))
+        label(evidence,'Runtime evidence').pack(anchor='w',padx=18,pady=(14,4))
+        self.evidence_rows={}
+        for key,title in [('dlss','DLSS'),('fsr','FSR / FidelityFX'),('xess','XeSS upscaling'),('dlssg','DLSS Frame Generation'),('fsrfg','FSR Frame Generation'),('xefg','XeSS Frame Generation')]:
+            item=label(evidence,title+' · Awaiting scan',anchor='w')
+            item.pack(fill='x',padx=18,pady=2);self.evidence_rows[key]=(title,item)
+        button(evidence,'View detected files and origins',lambda:self._toggle_panel(self.evidence_details)).pack(fill='x',padx=18,pady=8)
+        self.evidence_details=ctk.CTkFrame(evidence,fg_color='transparent')
+        self.evidence_files=label(self.evidence_details,'',muted=True,wraplength=470,justify='left')
+        self.evidence_files.pack(anchor='w',padx=18,pady=8)
+        label(evidence,'DLL presence is evidence, not proof of native feature availability or the active graphics API.',muted=True,wraplength=470,justify='left').pack(anchor='w',padx=18,pady=(0,14))
+        compatibility=card(self.scroll);compatibility.pack(fill='x',padx=22,pady=(0,14))
+        button(compatibility,'Advanced settings',self._toggle_compatibility).pack(fill='x',padx=10,pady=10)
+        self.compatibility_body=ctk.CTkFrame(compatibility,fg_color='transparent')
+        menu(self.compatibility_body,'xess_network_model')
+        for key,spec in SCHEMA.items():
+            if spec.mode!='compatibility':continue
+            if spec.kind is bool and spec.default is not None:
+                ctk.CTkSwitch(self.compatibility_body,text=spec.label,variable=self.variables[key],command=self._on_pipeline_param_changed).pack(anchor='w',pady=8)
+            else:menu(self.compatibility_body,key)
+        self.version_dropdown=self.controls['optiscaler_version']
+        self.plan_lbl=label(self.compatibility_body,'',muted=True,wraplength=500,justify='left');self.plan_lbl.pack(fill='x',pady=10)
+        self.research=None;self.support=None;self.research_generation=0
+        self._refresh_labels();self._update_pipeline_view()
+        self.bind('<Configure>',self._resize_labels)
 
-        self.mode_var = ctk.StringVar(value='automatic')
-        menu('Installation mode (manual = unverified)', self.mode_var, ['automatic', 'manual'])
-        self.version_var = ctk.StringVar(value='')
-        self.version_dropdown = menu('OptiScaler release', self.version_var, ['No installed releases'])
-        self.hook_var = ctk.StringVar(value='dxgi.dll')
-        menu('Proxy filename', self.hook_var, self.injector.DEFAULT_HOOKS)
-        self.starting_upscaler_var = ctk.StringVar(value='DLSS')
-        menu('Game upscaler input', self.starting_upscaler_var, ['DLSS', 'FSR'])
-        self.quality_var = ctk.StringVar(value='User Defined')
-        menu('Render resolution preset', self.quality_var, ['User Defined', *ConfigGenerator.QUALITY_RATIOS])
-        self.model_var = ctk.StringVar(value='auto')
-        menu('XeSS network variant (hardware is automatic)', self.model_var, ['auto', '0', '1', '2', '3', '4', '5'])
-        self.fg_input_var = ctk.StringVar(value='dlssg')
-        menu('Frame-generation input', self.fg_input_var, list(ConfigGenerator.FG_INPUTS))
-        ctk.CTkLabel(scroll, text='dlssg: native DLSSG • fsrfg: FSR 3.1 • fsrfg30: FSR 3.0 • upscaler: requires game-specific HUD tuning',
-                     wraplength=850, justify='left').pack(anchor='w', pady=4)
-        self.invert_depth_var = ctk.StringVar(value='auto')
-        menu('Depth inverted override', self.invert_depth_var, ['auto', 'true', 'false'])
-        self.jitter_var = ctk.StringVar(value='auto')
-        menu('Jittered motion vectors override', self.jitter_var, ['auto', 'true', 'false'])
+    def _resize_labels(self,event):
+        if event.widget is not self:return
+        width=max(220,int(event.width/self._get_widget_scaling())-88)
+        for widget in (self.info_lbl,self.health_lbl,self.suggestion_lbl,self.evidence_files,self.plan_lbl,self.fg_description,self.action_hint_lbl):widget.configure(wraplength=width)
+        self.title_lbl.configure(wraplength=max(160,width-130))
+        compact=width<510
+        if compact!=getattr(self,'_compact_sr',None):
+            self._compact_sr=compact
+            self.gauge.pack_forget();self.quality_segments.pack_forget()
+            if not compact:
+                self.gauge.pack(side='left',anchor='n',padx=(0,12),before=self.sr_options)
+                self.quality_segments.pack(fill='x',pady=(0,8),before=self.sr_details_button)
 
-        self.reflex_var = ctk.BooleanVar(value=False)
-        self.spoof_var = ctk.BooleanVar(value=False)
-        self.custom_scale_enabled_var = ctk.BooleanVar(value=False)
-        for label, variable in [('GPU identity spoofing (separate from required FG dependencies)', self.spoof_var),
-                                ('Enable Reflex through FakeNvapi (Intel latency backend chosen by runtime)', self.reflex_var),
-                                ('Override preset with custom render scale', self.custom_scale_enabled_var)]:
-            ctk.CTkCheckBox(scroll, text=label, variable=variable, command=self._on_pipeline_param_changed).pack(anchor='w', pady=8)
-        self.scale_val_lbl = ctk.CTkLabel(scroll, text='Render scale: 0.67x')
-        self.scale_val_lbl.pack(anchor='w')
-        self.scale_slider = ctk.CTkSlider(scroll, from_=0.25, to=1, command=self._on_scale_slider)
-        self.scale_slider.set(0.67)
-        self.scale_slider.pack(fill='x')
-        self.sharpness_val_lbl = ctk.CTkLabel(scroll, text='Sharpness: 0.30')
-        self.sharpness_val_lbl.pack(anchor='w')
-        self.sharpness_slider = ctk.CTkSlider(scroll, from_=0, to=1, command=self._on_sharpness_slider)
-        self.sharpness_slider.set(0.3)
-        self.sharpness_slider.pack(fill='x')
-        bar = ctk.CTkFrame(self, fg_color='#121E30', corner_radius=8)
-        scroll.pack_forget()
-        bar.pack(fill='x', side='bottom', padx=12, pady=(0, 8))
-        scroll.pack(fill='both', expand=True, padx=12, pady=12)
-        self.apply_btn = ctk.CTkButton(bar, text='Install / Update', command=self.apply_injection)
-        self.force_btn = ctk.CTkButton(
-            bar, text='⚡ Force Inject',
-            command=self.force_injection,
-            fg_color='#5C2A00', hover_color='#8A3D00', text_color='#FFB347',
-            width=130
-        )
-        self.launch_btn = ctk.CTkButton(bar, text='Launch & Monitor', command=self.launch_and_protect)
-        self.revert_btn = ctk.CTkButton(bar, text='Revert', command=self.revert_changes)
-        for button in (self.apply_btn, self.force_btn, self.launch_btn, self.revert_btn):
-            button.pack(side='left', padx=8, pady=8)
-        self.action_hint_lbl = ctk.CTkLabel(bar, text='', font=ctk.CTkFont(size=12))
-        self.action_hint_lbl.pack(side='left', padx=10)
-        ctk.CTkButton(bar, text='Open Folder', command=self.open_game_folder).pack(side='right', padx=8)
+    def _toggle_panel(self,panel):
+        if panel.winfo_manager():panel.pack_forget()
+        else:panel.pack(fill='x',padx=8,pady=(0,12))
+        self._remember_view()
 
-    def update_version_list(self):
-        installed = self.injector.version_manager.get_installed_versions()
+    def _remember_view(self):
+        if not self.current_profile or self._loading:return
+        view=dict(scroll=self.scroll._parent_canvas.yview()[0],advanced=bool(self.compatibility_body.winfo_manager()),
+                  evidence=bool(self.evidence_details.winfo_manager()),fine_tune=bool(self.sr_details.winfo_manager()))
+        self.library.update_profile(self.current_profile['id'],{'ui_view':view})
+
+    def _restore_view(self,profile):
+        view=profile.get('ui_view',{})
+        for key,panel in [('advanced',self.compatibility_body),('evidence',self.evidence_details),('fine_tune',self.sr_details)]:
+            panel.pack_forget()
+            if view.get(key):panel.pack(fill='x',padx=8,pady=(0,12))
+        game_id=profile['id']
+        def restore():
+            if not self._closed and self.current_profile and self.current_profile['id']==game_id:
+                self.scroll._parent_canvas.yview_moveto(float(view.get('scroll',0)))
+        if self._view_timer:self.after_cancel(self._view_timer)
+        self._view_timer=self.after(100,restore)
+
+    def _toggle_compatibility(self):
+        self._toggle_panel(self.compatibility_body)
+
+    def _installation_status(self,installed):
+        from gui.theme import GREEN,RED
+        self.status_lbl.configure(text='●  Installed' if installed else '●  Not installed',text_color=GREEN if installed else RED)
+
+    def _suggested_settings(self):
+        return dict(self.recommendation['settings']) if self.recommendation else {}
+
+    def _show_evidence(self,analysis=None):
+        from gui.theme import GREEN,MUTED
+        from core.game_support import runtime_evidence
+        for key,(title,item) in self.evidence_rows.items():
+            present=bool(self.support and self.support.get(key))
+            uncertain=key=='fsrfg' and self.support and self.support.get('fsrfg_uncertain') and not present
+            suffix='Detected' if present else 'Uncertain' if uncertain else 'Not detected' if analysis else 'Scanning…'
+            item.configure(text=('●  ' if present else '○  ')+title+' · '+suffix,text_color=GREEN if present else MUTED)
+        self.suggest_btn.configure(state='normal' if self.recommendation and self.recommendation['ready'] and not self.busy else 'disabled')
+        if not analysis:
+            self.evidence_files.configure(text='Scanning local runtime files…')
+            self.suggestion_lbl.configure(text='Checking this game for a suggested preset…');return
+        rows=self._evidence if self._evidence is not None else runtime_evidence(analysis)
+        self.evidence_files.configure(text='\n\n'.join(r['filename']+' · '+r['origin']+'\n'+r['path']+'\n'+r['confidence'] for r in rows) or 'No runtime DLLs found.')
+        if self.support is None:
+            self.suggestion_lbl.configure(text=analysis.get('error','Could not analyze this game. Use More → Rescan.'));return
+        if not self.recommendation:
+            from core.recommendations import recommend
+            self.recommendation=recommend(analysis,self._settings(),self.injector.version_manager,self.hw_info)
+        rec=self.recommendation;values=rec['settings']
+        summary='Super Resolution: '+('On · '+values['starting_upscaler']+' · '+values['xess_quality'] if values['upscaler_enabled'] else 'Use native XeSS' if self.support['xess'] else 'Off')
+        summary+='\nFrame Generation: '+('On · '+values['fg_input'] if values['frame_gen_enabled'] else 'Off')
+        summary+='\n'+'\n'.join(note.split(' Upscaler-driven')[0] for note in rec['notes'])
+        self.evidence_files.configure(text=self.evidence_files.cget('text')+'\n\n'+'\n'.join(rec['notes']))
+        if rec['errors']:summary+='\nNeeds attention: '+'; '.join(rec['errors'])
+        self.suggestion_lbl.configure(text=summary.strip())
+        self.suggest_btn.configure(state='normal' if rec['ready'] and not self.busy else 'disabled')
+
+    def _toggle_mode(self,key):
+        self._on_pipeline_param_changed()
+
+    def show_empty(self,library_tab):
+        from gui.theme import BG,BLUE,label,button
+        if hasattr(self,'empty_state'):self.empty_state.destroy()
+        self.empty_state=ctk.CTkFrame(self,fg_color=BG,corner_radius=0)
+        self.empty_state.place(relx=0,rely=0,relwidth=1,relheight=1)
+        center=ctk.CTkFrame(self.empty_state,fg_color='transparent')
+        center.place(relx=.5,rely=.47,anchor='center')
+        import tkinter as tk
+        mark=tk.Canvas(center,width=42,height=42,bg=BG,highlightthickness=0);mark.pack()
+        mark.create_arc(7,6,35,34,start=-35,extent=250,style='arc',outline='#22BDF2',width=4)
+        mark.create_oval(18,23,24,29,fill='#22BDF2',outline='')
+        heading=label(center,'Add your first game');heading.configure(font=ctk.CTkFont(size=20,weight='bold'));heading.pack(pady=(12,6))
+        label(center,"Scan Steam and Epic, add a folder, or pick a game's\n.exe. ArcScaler only changes a game when you press\nInstall.",muted=True,justify='center').pack()
+        actions=ctk.CTkFrame(center,fg_color='transparent');actions.pack(pady=22)
+        button(actions,'Auto-scan Steam & Epic',library_tab._auto_scan,primary=True,width=180).pack(side='left',padx=4)
+        button(actions,'+  Add game (.exe / .lnk)',library_tab._add_game_file,width=174).pack(side='left',padx=4)
+        button(actions,'Add folder',library_tab._add_game_folder,width=100).pack(side='left',padx=4)
+
+    def _game_menu(self):
+        from gui.theme import BORDER,button
+        if not self.current_profile or self.busy:return
+        if hasattr(self,'game_menu') and self.game_menu.winfo_exists():
+            self.game_menu.destroy();return
+        menu=ctk.CTkFrame(self,fg_color='#171C24',border_color=BORDER,border_width=1,corner_radius=14)
+        self.game_menu=menu
+        y=self.menu_button.winfo_rooty()-self.winfo_rooty()+self.menu_button.winfo_height()+8
+        menu.place(relx=1,x=-24,y=max(8,y),anchor='ne');menu.lift()
+        def invoke(action):
+            menu.destroy();action()
+        for text,action in [('Open game folder',self.open_game_folder),('Rescan',self.rescan),('Verify installed files',self.verify),('Restore original files',self.revert_changes),('Export diagnostics',self.export_diagnostics),('Force inject (advanced)',self.force_injection),('Remove from library',self.remove_game)]:
+            item=button(menu,text,lambda fn=action:invoke(fn),width=240,anchor='w')
+            item.configure(fg_color='transparent',border_width=0,text_color='#FFB52E' if action==self.remove_game else '#EEF3FA')
+            if action in (self.verify,self.revert_changes) and (self.health or {}).get('state')=='not_installed':item.configure(state='disabled')
+            item.pack(fill='x',padx=10,pady=5)
+        menu.bind('<Escape>',lambda _:menu.destroy());menu.focus_set()
+        menu.bind('<FocusOut>',lambda _:self.after(100,lambda:menu.destroy() if menu.winfo_exists() and not str(self.focus_get()).startswith(str(menu)) else None))
+
+    def verify(self):
+        if self.current_profile:
+            folder=self.current_profile['target_dir']
+            dirs=self.current_profile.get('recovery_dirs',self.current_profile.get('all_target_dirs',[]))
+            def done(result):
+                self.health=result;self._update_pipeline_view()
+                messagebox.showinfo('Installation health',result.get('message',result.get('error','')))
+            self._run(lambda:self.injector.verify_installation(folder,dirs),done)
+
+    def remove_game(self):
+        if self.current_profile and not self.busy and messagebox.askyesno('Remove game','Remove this profile from the library? Installed game files will be retained.'):
+            self.research_generation+=1;self.tasks.cancel('profile-scan')
+            if self._plan_timer:self.after_cancel(self._plan_timer);self._plan_timer=None
+            self.library.remove_game(self.current_profile['id']);self.current_profile=None
+            self.title_lbl.configure(text='Select a game');self._update_pipeline_view()
+            if self.on_profile_updated:self.on_profile_updated()
+
+    def update_version_list(self,refresh=True):
+        if refresh or not hasattr(self,'_release_values'):
+            self._release_values=self.injector.version_manager.get_installed_versions()
+        installed=self._release_values
         self.version_dropdown.configure(values=installed or ['No installed releases'])
         if not self.version_var.get() and installed:
             self.version_var.set(installed[0])
 
-    @staticmethod
-    def _flag(value):
-        return 'auto' if value is None else str(value).lower()
-
     def load_game(self, profile):
+        self._remember_view()
+        profile=dict(self.library.profiles.get(profile['id'],profile))
+        self.tasks.cancel('profile-scan')
+        if self._plan_timer:self.after_cancel(self._plan_timer);self._plan_timer=None
+        if hasattr(self,'empty_state'):self.empty_state.destroy()
+        if hasattr(self,'game_menu') and self.game_menu.winfo_exists():self.game_menu.destroy()
         self._loading = True
         self.current_profile = dict(profile)
         self._analysis = None
         self.preview_plan = None
-        self.update_version_list()
+        self.recommendation=None;self.health=None;self._evidence=None;self._draft_error=None
+        self.update_version_list(refresh=False)
         self.title_lbl.configure(text=profile.get('name', 'Game'))
         info = f"{profile.get('engine', '')}\n{profile.get('target_dir', '')}"
         if profile.get('anti_cheat'):
             info += f"\n{profile['anti_cheat']} detected. Use only a supported offline game configuration."
-        self.info_lbl.configure(text=info)
-        values = [(self.mode_var, profile.get('installation_mode', 'automatic')),
-                  (self.version_var, profile.get('optiscaler_version', self.version_var.get())),
-                  (self.starting_upscaler_var, profile.get('starting_upscaler', 'DLSS')),
-                  (self.hook_var, profile.get('hook_method', 'dxgi.dll')),
-                  (self.quality_var, profile.get('xess_quality', 'User Defined')),
-                  (self.upscaler_var, profile.get('upscaler_enabled', True)),
-                  (self.spoof_var, profile.get('gpu_spoofing', False)),
-                  (self.frame_gen_var, profile.get('frame_gen_enabled', False)),
-                  (self.reflex_var, profile.get('reflex_to_xell_enabled', False)),
-                  (self.fg_input_var, profile.get('fg_input', 'dlssg')),
-                  (self.model_var, str(profile.get('xess_network_model') if profile.get('xess_network_model') is not None else 'auto')),
-                  (self.invert_depth_var, self._flag(profile.get('invert_depth'))),
-                  (self.jitter_var, self._flag(profile.get('jitter_cancellation')))]
-        for variable, value in values:
-            variable.set(value)
+        self.info_lbl.configure(text='Selected release: '+(profile.get('optiscaler_version') or self.version_var.get() or 'None'))
+        self._installation_status(profile.get('is_injected'))
+        if hasattr(self,'icons'):
+            game_id=profile['id']
+            def received(image):
+                if self.current_profile and self.current_profile['id']==game_id:
+                    artwork=ctk.CTkImage(image,size=(48,48));self.game_icon.configure(image=artwork);self.game_icon.artwork=artwork
+            self.icons.request(profile['target_exe'],profile['name'],received)
+        from core.settings import migrate, SCHEMA
+        restored=migrate(profile)
+        for key,spec in SCHEMA.items():
+            value=restored[key]
+            if key=='optiscaler_version' and not value:value=self.version_var.get()
+            if spec.default is None:value='auto' if value is None else str(value).lower() if isinstance(value,bool) else str(value)
+            self.variables[key].set(value)
         scale = profile.get('custom_scale')
         self.custom_scale_enabled_var.set(scale is not None)
         self.scale_slider.set(scale if scale is not None else 0.67)
@@ -169,242 +346,242 @@ class ConfigTab(ctk.CTkFrame):
         self.support = None
         self.research = None
         self._update_pipeline_view()
+        self._show_evidence()
+        self._restore_view(profile)
         self._research_game(dict(profile))
 
     def _refresh_labels(self):
         self.scale_val_lbl.configure(text=f'Render scale: {self.scale_slider.get():.2f}x')
         self.sharpness_val_lbl.configure(text=f'Sharpness: {self.sharpness_slider.get():.2f}')
+        scale=self.scale_slider.get() if self.custom_scale_enabled_var.get() else 1/ConfigGenerator.QUALITY_RATIOS.get(self.quality_var.get(),1.5)
+        signature=(round(scale,4),self.upscaler_var.get())
+        if signature==getattr(self,'_gauge_signature',None):return
+        self._gauge_signature=signature
+        self.gauge.delete('all')
+        from PIL import ImageTk
+        from gui.theme import gauge_image
+        self.gauge_art=ImageTk.PhotoImage(gauge_image(scale,self.upscaler_var.get()))
+        self.gauge.create_image(0,0,image=self.gauge_art,anchor='nw')
+        self.gauge.create_text(68,64,text=f'{scale:.2f}×',fill='#EEF3FA' if self.upscaler_var.get() else '#515967',font=('Segoe UI',24,'bold'))
+        self.gauge.create_text(68,89,text='render scale',fill='#8B9CB6' if self.upscaler_var.get() else '#515967',font=('Segoe UI',10))
 
     def _settings(self):
-        flag = lambda s: None if s == 'auto' else s == 'true'
-        return {'installation_mode': self.mode_var.get(), 'optiscaler_version': self.version_var.get(), 'starting_upscaler': self.starting_upscaler_var.get(),
-                'hook_method': self.hook_var.get(), 'xess_quality': self.quality_var.get(),
-                'upscaler_enabled': self.upscaler_var.get(), 'gpu_spoofing': self.spoof_var.get(),
-                'frame_gen_enabled': self.frame_gen_var.get(), 'fg_input': self.fg_input_var.get(),
-                'reflex_to_xell_enabled': self.reflex_var.get(), 'reflex_boost': False,
-                'xess_network_model': None if self.model_var.get() == 'auto' else int(self.model_var.get()),
-                'custom_scale': self.scale_slider.get() if self.custom_scale_enabled_var.get() and self.quality_var.get() != 'User Defined' else None,
-                'sharpness': self.sharpness_slider.get(), 'invert_depth': flag(self.invert_depth_var.get()),
-                'jitter_cancellation': flag(self.jitter_var.get()), 'settings_schema': 2}
+        from core.settings import SCHEMA
+        values={}
+        for key,spec in SCHEMA.items():
+            value=self.variables[key].get()
+            if value=='auto' and spec.default is None:value=None
+            elif spec.kind is bool and isinstance(value,str):value=value=='true'
+            elif spec.kind is int and value is not None:value=int(value)
+            elif spec.kind is float and value is not None:value=float(value)
+            values[key]=value
+        values['custom_scale']=self.scale_slider.get() if self.custom_scale_enabled_var.get() else None
+        values['sharpness']=self.sharpness_slider.get()
+        return dict(values,settings_schema=3)
 
     def _save_current_settings_to_profile(self):
         if self.current_profile and not self._loading:
             settings = self._settings()
-            self.library.update_profile(self.current_profile['id'], settings)
-            self.current_profile.update(settings)
+            try:
+                self.library.update_profile(self.current_profile['id'], settings)
+                self.current_profile.update(settings);self._draft_error=None
+            except OSError as exc:
+                self._draft_error=str(exc);self.log('Draft could not be saved: '+str(exc),'error')
 
     def _on_pipeline_param_changed(self, *args):
-        self._update_pipeline_view()
         self._save_current_settings_to_profile()
+        self._schedule_research()
+        self._update_pipeline_view()
 
     def _update_pipeline_view(self):
-        analysis = self._analysis
-        if analysis is None and self.current_profile:
-            analysis = dict(self.current_profile, game_name=self.current_profile['name'])
-        if analysis:
-            try:
-                self.preview_plan = build_plan(analysis, self._settings())
-                self.plan_lbl.configure(text=format_plan(self.preview_plan))
-                if not self.busy:
-                    has_errors = bool(self.preview_plan['errors'])
-                    self.apply_btn.configure(state='disabled' if has_errors else 'normal')
-                    if has_errors:
-                        first_err = self.preview_plan['errors'][0]
-                        if 'No reviewed' in first_err:
-                            self.action_hint_lbl.configure(
-                                text='⚠️ Unlisted game: select "manual" mode or click "Use suggested settings".',
-                                text_color='#FFB86C'
-                            )
-                        elif 'Select XeSS' in first_err:
-                            self.action_hint_lbl.configure(
-                                text='⚠️ Check "Install XeSS upscaling" above to install.',
-                                text_color='#FFB86C'
-                            )
-                        else:
-                            self.action_hint_lbl.configure(text=f'⚠️ {first_err[:65]}', text_color='#FF6B6B')
-                    else:
-                        self.action_hint_lbl.configure(text='✓ Ready to install', text_color='#50FA7B')
-            except Exception as exc:
-                self.preview_plan = None
-                self.plan_lbl.configure(text='Cannot prepare installation: ' + str(exc))
-                self.apply_btn.configure(state='disabled')
-                self.action_hint_lbl.configure(text=f'⚠️ {str(exc)[:65]}', text_color='#FF6B6B')
-        self.scale_slider.configure(state='normal' if self.quality_var.get() != 'User Defined' and self.custom_scale_enabled_var.get() else 'disabled')
+        from gui.theme import enabled_tree
+        sr,fg=self.upscaler_var.get(),self.frame_gen_var.get()
+        enabled_tree(self.sr_body,sr and not self.busy)
+        enabled_tree(self.fg_body,fg and not self.busy)
+        enabled_tree(self.compatibility_body,not self.busy)
+        for switch in self.section_switches:switch.configure(state='disabled' if self.busy else 'normal',text='On' if switch.get() else 'Off')
+        self.scale_slider.configure(state='normal' if sr and self.custom_scale_enabled_var.get() and not self.busy else 'disabled')
+        if not self.custom_scale_enabled_var.get():
+            self.scale_slider.configure(progress_color='#444B57',button_color='#555D69')
+        self.fg_description.configure(text={'dlssg':"Native DLSSG. Uses the game's frame-generation input.",
+            'fsrfg':'FSR 3.1 frame-generation input.', 'fsrfg30':'FSR 3.0 frame-generation input.'}.get(self.fg_input_var.get(),''))
+        self.section_notes['upscaler_enabled'].configure(text='XeSS upscaling · selected for installation' if sr else 'Turn on to edit quality and resolution.')
+        api=(self._analysis or {}).get('graphics_api','Unknown')
+        self.section_notes['frame_gen_enabled'].configure(text='Requires DirectX 12 · current API evidence: '+api if api!='DX12' else 'DirectX 12 evidence present · verify in game')
+        if not fg:self.fg_description.configure(text='Turn on Frame Generation to edit its input. SR can stay enabled at the same time.')
+        self.apply_btn.configure(state='normal' if self.current_profile and (sr or fg) and not self.busy else 'disabled')
+        self.force_btn.configure(state='normal' if self.current_profile and (sr or fg) and not self.busy else 'disabled')
+        self.action_hint_lbl.configure(text='' if sr or fg else 'Turn on Super Resolution or Frame Generation to install.')
+        self._refresh_action_state()
+        self._refresh_labels()
 
-    def _research_game(self, profile):
-        self.research_generation += 1
-        generation = self.research_generation
-        for child in self.sources_bar.winfo_children():
-            child.destroy()
-        self._show_suggestions('Scanning local runtimes and checking the official OptiScaler compatibility wiki…')
-        def worker():
+    def _refresh_action_state(self):
+        if not self.current_profile:return
+        state=(self.health or {}).get('state','checking')
+        titles={'installed':'Installed','modified':'Modified','incomplete':'Incomplete','recovery_required':'Recovery required','unverified':'Unverified','not_installed':'Not installed','checking':'Checking files…'}
+        self.status_lbl.configure(text=('●  ' if state=='installed' else '○  ')+titles[state],text_color='#42D9A0' if state=='installed' else '#FF7887' if state=='not_installed' else '#FFBF69')
+        installed=(self.health or {}).get('settings',{})
+        baseline=(self.health or {}).get('requested_settings') or installed
+        selected=self._settings()
+        def equal(a,b):
+            return abs(a-b)<0.00001 if type(a) in (float,int) and type(b) in (float,int) else a==b
+        from core.settings import SCHEMA
+        changed=not baseline or any(not equal(selected[k],baseline.get(k)) for k in SCHEMA)
+        self.draft_lbl.configure(text='Unsaved changes' if getattr(self,'_draft_error',None) else 'Changes not installed' if changed else 'Draft matches install',text_color='#FFBF69' if changed else '#42D9A0')
+        blocked=state in ('recovery_required','modified','incomplete')
+        self.apply_btn.configure(text='Up to date' if state=='installed' and not changed else 'Update installation' if state not in ('not_installed','checking') else 'Install to game',
+                                 state='normal' if not self.busy and not blocked and (self.upscaler_var.get() or self.frame_gen_var.get()) and (changed or state!='installed') else 'disabled')
+        self.launch_btn.configure(state='normal' if not self.busy and state=='installed' else 'disabled')
+        self.force_btn.configure(state='normal' if not self.busy and not blocked and (self.upscaler_var.get() or self.frame_gen_var.get()) else 'disabled')
+        self.revert_btn.configure(state='normal' if not self.busy and state not in ('not_installed','checking') else 'disabled')
+        self.suggest_btn.configure(state='normal' if not self.busy and self.recommendation and self.recommendation['ready'] else 'disabled')
+        self.recovery_btn.pack_forget()
+        if blocked:
+            self.recovery_btn.pack(fill='x',padx=22,pady=(0,12),after=self.health_lbl)
+            self.recovery_btn.configure(state='disabled' if self.busy else 'normal')
+        detail=(self.health or {}).get('message','Checking installation health…')
+        if installed:detail+=' · Installed release: '+installed.get('optiscaler_version','Unknown')
+        if self._analysis:detail+='\nAPI evidence: '+self._analysis.get('graphics_api','Unknown')+' · DLLs do not prove active features.'
+        self.health_lbl.configure(text=detail)
+        self.info_lbl.configure(text='Selected release: '+(self.version_var.get() or 'None')+' · Draft saved automatically')
+        if self.busy:self.action_hint_lbl.configure(text='Working… Please wait for file operations to finish.')
+        elif getattr(self,'_draft_error',None):self.action_hint_lbl.configure(text='Draft not saved: '+self._draft_error)
+        elif blocked:self.action_hint_lbl.configure(text='Review recovery before installing or launching.')
+        elif self.upscaler_var.get() or self.frame_gen_var.get():self.action_hint_lbl.configure(text='Install applies the draft to game files.' if changed else 'Files verified. Confirm active features in the game overlay.')
+
+    def _research_game(self,profile,refresh=True):
+        from core.installation_state import installation_health
+        from core.recommendations import recommend
+        self.research_generation+=1;generation=self.research_generation
+        self._scan_pending=True
+        settings=self._settings();hardware=dict(self.hw_info or {})
+        cached=None if refresh else self._analysis
+        cached_health=None if refresh else self.health
+        def operation():
+            from core.game_support import runtime_evidence
+            health=cached_health or installation_health(profile['target_dir'],profile.get('recovery_dirs',profile.get('all_target_dirs',[])))
             try:
-                analysis = GameDetector.analyze_game(profile['target_exe'])
-                if not analysis.get('valid'):
-                    raise ValueError(analysis.get('error'))
-                if profile.get('base_dir'):
-                    analysis['discovered_locations'], analysis['detected_upscalers'] = GameDetector._deep_scan_upscalers(profile['base_dir'], profile['target_dir'])
-                analysis['all_target_dirs'] = profile.get('all_target_dirs', [profile['target_dir']])
-                support = capabilities(analysis)
-                self.dispatcher.post(local_done, support, analysis)
-                result = CompatibilityResearch.lookup(identity_names(analysis))
-            except Exception as exc:
-                support, result = None, {'status': 'error', 'notes': str(exc), 'sources': []}
-            self.dispatcher.post(done, support, result)
-        def local_done(support, analysis):
-            if generation != self.research_generation:
-                return
-            self.support = support
-            self._analysis = analysis
-            self._show_suggestions(describe(support) + '\n\nChecking official online compatibility…')
+                analysis=cached or GameDetector.analyze_game(profile['target_exe'],profile.get('base_dir'))
+                if not analysis.get('valid'):return analysis,None,None,None,health,[]
+                plan=build_plan(analysis,dict(settings,hardware=hardware),self.injector.version_manager)
+                return analysis,plan,capabilities(analysis),recommend(analysis,settings,self.injector.version_manager,hardware),health,runtime_evidence(analysis)
+            except (OSError,ValueError,KeyError,TypeError) as exc:
+                return {'valid':False,'error':str(exc)},None,None,None,health,[]
+        def done(result):
+            if generation!=self.research_generation or not self.current_profile or self.current_profile['id']!=profile['id']:return
+            analysis,plan,support,rec,health,evidence=result
+            self._scan_pending=False;self._analysis=analysis if analysis.get('valid') else None
+            self.preview_plan=plan;self.support=support;self.recommendation=rec;self.health=health
+            self._evidence=evidence
+            self.plan_lbl.configure(text=format_plan(plan) if plan else analysis.get('error','Scan failed'))
+            self._show_evidence(analysis);self._update_pipeline_view()
+            self.library.update_profile(profile['id'],{'installation_health':health['state'],'is_injected':health['state']=='installed'})
+            if self.on_profile_updated:self.on_profile_updated()
+        def failed(error):
+            if generation!=self.research_generation:return
+            self._scan_pending=False;self.support=None;self.recommendation=None;self.preview_plan=None
+            self.suggestion_lbl.configure(text='Scan failed: '+error+'\nChoose More → Rescan to retry.')
+            self.suggest_btn.configure(state='disabled');self.log('Game analysis failed: '+error,'error')
             self._update_pipeline_view()
-        def done(support, result):
-            if generation != self.research_generation:
-                return
-            self.support, self.research = support, result
-            text = (describe(support) + '\n\n' if support else '')
-            if self.preview_plan and self.preview_plan.get('recipe_id'):
-                text += 'Reviewed automatic recipe: ' + self.preview_plan['title'] + '\n' + '\n'.join(self.preview_plan['notes']) + '\n\n'
-            if self.hw_info:
-                gpu = self.hw_info['primary_gpu']
-                arc_text = "Intel Arc GPU detected — Dedicated XMX AI matrix acceleration active." if self.hw_info.get('is_arc_detected') else f"{gpu['name']} ({gpu['xess_acceleration']} mode)."
-                text += f'Detected Hardware: {arc_text}\n'
-            text += 'Online research: ' + result['status'] + ' • ' + result.get('checked_at', '') + '\n' + result['notes']
-            text += '\n\nSuggested render preset: User Defined — change quality in game.\nGPU detection errors: leave GPU spoofing off first. If the error persists, Revert and collect the OptiScaler log, game build, API and driver version.'
-            self._show_suggestions(text)
-            for child in self.sources_bar.winfo_children():
-                child.destroy()
-            for i, url in enumerate(list(dict.fromkeys((self.preview_plan or {}).get('sources', []) + result.get('sources', [])))[:3]):
-                ctk.CTkButton(self.sources_bar, text='Official source ' + str(i + 1), width=130,
-                              command=lambda u=url: webbrowser.open(u)).pack(side='left', padx=4)
-            ctk.CTkButton(self.sources_bar, text='Use suggested settings', command=self._use_suggestions).pack(side='right', padx=4)
-            self._update_pipeline_view()
-        threading.Thread(target=worker, daemon=True).start()
+        self.tasks.submit('profile-scan',operation,done,failed)
+
+    def _schedule_research(self):
+        if not self.current_profile or self._loading or self.busy:return
+        if self._plan_timer:self.after_cancel(self._plan_timer)
+        self.research_generation+=1;self.tasks.cancel('profile-scan')
+        self._scan_pending=True
+        self._plan_timer=self.after(250,lambda:self._research_game(dict(self.current_profile),refresh=False))
+
+    def rescan(self):
+        if self.current_profile and not self.busy:self._research_game(dict(self.current_profile))
 
     def _use_suggestions(self):
-        controls = suggested_controls(self.support, self.research)
-        if self.preview_plan and self.preview_plan.get('recipe_id'):
-            controls.update(self.preview_plan['settings'])
-            self.spoof_var.set(controls['gpu_spoofing'])
-        else:
-            # For unlisted games, switch to manual mode so the plan is immediately ready to install
-            self.mode_var.set('manual')
-            if self.hw_info and (self.hw_info.get('is_arc_detected') or self.hw_info.get('primary_gpu', {}).get('vendor') == 'Intel'):
-                self.spoof_var.set(False)
-        self.upscaler_var.set(True)
-        for key, var in [('xess_quality', self.quality_var), ('starting_upscaler', self.starting_upscaler_var),
-                         ('fg_input', self.fg_input_var), ('hook_method', self.hook_var)]:
-            if key in controls:
-                var.set(controls[key])
-        self.custom_scale_enabled_var.set(False)
-        self._on_pipeline_param_changed()
-
-    def _show_suggestions(self, text):
-        self.suggest_text.configure(state='normal')
-        self.suggest_text.delete('1.0', 'end')
-        self.suggest_text.insert('1.0', text)
-        self.suggest_text.configure(state='disabled')
+        if not self.current_profile or self.busy:return
+        if not self.recommendation or not self.recommendation['ready']:return
+        values=self._suggested_settings()
+        self.library.update_profile(self.current_profile['id'],values)
+        self.load_game(self.library.profiles[self.current_profile['id']])
 
     def _on_scale_slider(self, value):
-        self._refresh_labels()
-        self._save_current_settings_to_profile()
+        self._on_pipeline_param_changed()
 
     def _on_sharpness_slider(self, value):
-        self._refresh_labels()
-        self._save_current_settings_to_profile()
+        self._on_pipeline_param_changed()
 
     def _run(self, operation, done):
-        if self.busy:
-            return
-        self.busy = True
-        for button in (self.apply_btn, self.force_btn, self.revert_btn, self.launch_btn):
-            button.configure(state='disabled')
-        def worker():
-            try:
-                result = operation()
-            except Exception as exc:
-                result = {'success': False, 'error': str(exc)}
-            self.dispatcher.post(finish, result)
+        if self.busy:return
+        self.busy=True
+        self.tasks.cancel('profile-scan');self.research_generation+=1;self._scan_pending=False
+        if self._plan_timer:self.after_cancel(self._plan_timer);self._plan_timer=None
+        self.progress.start();self._update_pipeline_view()
+        self.action_hint_lbl.configure(text='Working… Please wait for file operations to finish.')
         def finish(result):
-            self.busy = False
-            for button in (self.apply_btn, self.force_btn, self.revert_btn, self.launch_btn):
-                button.configure(state='normal')
+            self.busy=False;self.progress.stop();self.progress.set(0)
             done(result)
             self._update_pipeline_view()
-        threading.Thread(target=worker, daemon=True).start()
+        self.tasks.submit('file-operation',operation,finish,lambda error:finish({'success':False,'error':error}),cancellable=False)
 
     def _record_result(self, profile, result):
         updates = {'is_injected': self.injector.is_injected(profile['target_dir']),
                    'has_backup': SafetyManager.has_active_backup(profile['target_dir'])}
         if result.get('success') and result.get('plan'):
             updates['last_installation_plan'] = result['plan']
+            updates['installed_mode'] = 'sr+fg' if all(result['plan']['settings'][k] for k in ('upscaler_enabled','frame_gen_enabled')) else 'fg' if result['plan']['settings']['frame_gen_enabled'] else 'sr'
         self.library.update_profile(profile['id'], updates)
         if self.current_profile and self.current_profile['id'] == profile['id']:
             self.current_profile.update(updates)
-            self.status_lbl.configure(text=result.get('message') or result.get('error', ''))
+            self._installation_status(updates['is_injected'])
+            self.rescan()
         if self.on_profile_updated:
             self.on_profile_updated()
 
     def apply_injection(self):
-        if not self.current_profile or self.busy:
-            return
-        self._save_current_settings_to_profile()
-        profile = dict(self.current_profile)
-        settings = self._settings()
-        settings.pop('settings_schema')
-        def done(result):
-            self._record_result(profile, result)
-            if result.get('success'):
-                self.log(result['message'], 'success')
-            else:
-                detail = result.get('error', '')
-                if result.get('recovery'):
-                    detail += '\nRecovery: ' + str(result['recovery'])
-                messagebox.showerror('Installation failed', detail)
-        self._run(lambda: self.injector.apply_injection(profile['target_dir'], profile['target_exe'],
-                  base_dir=profile.get('base_dir'), **settings), done)
+        self._preview_install(False)
 
     def force_injection(self):
-        """Inject even when errors/conflicts are present.
+        self._preview_install(True)
 
-        Bypasses recipe validation, unmanaged-proxy blocks, and preserves the
-        user-chosen proxy filename regardless of the automatic recipe hook.
-        OptiScaler.ini is always written; existing user edits are merged in.
-        """
-        if not self.current_profile or self.busy:
-            return
-        if not messagebox.askyesno(
-            'Force Inject',
-            'Force inject will override ALL validation errors, including:\n'
-            '  • Unmanaged proxy conflicts\n'
-            '  • Recipe hook mismatches\n'
-            '  • Automatic mode restrictions\n\n'
-            'Existing OptiScaler.ini user edits will be preserved.\n\n'
-            'Proceed?',
-            icon='warning'
-        ):
-            return
+    def _preview_install(self,force):
+        if not self.current_profile or self.busy:return
+        from core.settings import validate
+        try:
+            settings=self._settings();settings.pop('settings_schema')
+            validate(settings,require_mode=True)
+        except ValueError as exc:
+            messagebox.showerror('Choose a mode',str(exc));return
         self._save_current_settings_to_profile()
-        profile = dict(self.current_profile)
-        settings = self._settings()
-        settings.pop('settings_schema')
-        settings['force'] = True
-        def done(result):
-            self._record_result(profile, result)
-            if result.get('success'):
-                notes = result.get('plan', {}).get('notes', [])
-                force_notes = [n for n in notes if n.startswith('[Force]')]
-                if force_notes:
-                    self.log('Force inject warnings: ' + ' | '.join(force_notes), 'warning')
-                self.log(result['message'], 'success')
-            else:
-                detail = result.get('error', '')
-                if result.get('recovery'):
-                    detail += '\nRecovery: ' + str(result['recovery'])
-                messagebox.showerror('Force injection failed', detail)
-        self._run(lambda: self.injector.apply_injection(profile['target_dir'], profile['target_exe'],
-                  base_dir=profile.get('base_dir'), **settings), done)
-
+        profile=dict(self.current_profile)
+        settings.update(force=force,hardware=self.hw_info or {})
+        def prepare():
+            analysis=GameDetector.analyze_game(profile['target_exe'],profile.get('base_dir'))
+            if not analysis.get('valid'):raise ValueError(analysis.get('error'))
+            return build_plan(analysis,settings,self.injector.version_manager)
+        def ready(plan):
+            if 'error' in plan:messagebox.showerror('Preview failed',plan['error']);return
+            self.preview_plan=plan
+            preview=format_plan(plan)
+            self.log(preview,'warning' if plan['errors'] else 'info')
+            if plan['errors'] and not force:messagebox.showerror('Installation not ready',preview);return
+            dialog=ctk.CTkToplevel(self);dialog.title('ArcScaler · Review installation');dialog.geometry('680x560');dialog.transient(self.winfo_toplevel());dialog.grab_set()
+            from core.paths import resource_root
+            dialog.after(250,lambda:dialog.iconbitmap(str(resource_root()/'assets/arcscaler.ico')) if dialog.winfo_exists() else None)
+            text=ctk.CTkTextbox(dialog,wrap='word');text.pack(fill='both',expand=True,padx=16,pady=16);text.insert('1.0',preview);text.configure(state='disabled')
+            acknowledgement=None
+            if force:
+                acknowledgement=ctk.CTkCheckBox(dialog,text='I accept the risk of game failure or anti-cheat action.\nI have verified this is a supported offline configuration.')
+                acknowledgement.pack(padx=16,pady=8)
+            def install():
+                if force and not acknowledgement.get():return
+                dialog.destroy()
+                def done(result):
+                    self._record_result(profile,result)
+                    self.log(result.get('message',result.get('error','')), 'success' if result.get('success') else 'error')
+                    if not result.get('success'):messagebox.showerror('Installation failed',result.get('error','')+'\n'+str(result.get('recovery','')))
+                self._run(lambda:self.injector.apply_injection(profile['target_dir'],profile['target_exe'],base_dir=profile.get('base_dir'),expected_plan=plan,**settings),done)
+            from gui.theme import button
+            button(dialog,'Confirm force injection' if force else 'Confirm installation',install,primary=True).pack(side='right',padx=16,pady=12)
+            button(dialog,'Cancel',dialog.destroy).pack(side='right',pady=12)
+        self._run(prepare,ready)
 
     def launch_and_protect(self):
         if not self.current_profile or self.busy:
@@ -438,18 +615,53 @@ class ConfigTab(ctk.CTkFrame):
         if not messagebox.askyesno('Revert installation', f"Restore the saved original files for {profile['name']}?"):
             return
         def done(result):
+            if result.get('conflicts'):
+                detail='\n'.join(result['conflicts'])
+                if messagebox.askyesno('Preserve changed files',detail+'\n\nThese files changed outside ArcScaler. Save separate copies and restore the originals?'):
+                    self._run(lambda:self.injector.revert_injection(profile['target_dir'],profile['target_exe'],
+                        additional_dirs=profile.get('recovery_dirs',profile.get('all_target_dirs',[])),preserve_changes=True),done)
+                return
             self._record_result(profile, result)
             self.log(result.get('message', result.get('error', '')), 'success' if result.get('success') else 'error')
             if not result.get('success'):
                 messagebox.showerror('Recovery incomplete', result['error'])
+            elif result.get('preserved'):
+                messagebox.showinfo('Changed files preserved','Copies were saved under .optiscaler_backup/preserved.\n'+result['preserved'][0]['copy'])
         self._run(lambda: self.injector.revert_injection(profile['target_dir'], profile['target_exe'],
                   additional_dirs=profile.get('recovery_dirs', profile.get('all_target_dirs', []))), done)
 
     def open_game_folder(self):
         if self.current_profile:
-            os.startfile(self.current_profile['target_dir'])
+            try:os.startfile(self.current_profile['target_dir'])
+            except OSError as exc:messagebox.showerror('Open game folder',str(exc))
+
+    def export_diagnostics(self):
+        from core.diagnostics import diagnostic_report
+        from tkinter import filedialog
+        from core.files import atomic_write
+        from gui.theme import button
+        dialog=ctk.CTkToplevel(self);dialog.title('Preview diagnostic report');dialog.geometry('720x600');dialog.transient(self.winfo_toplevel());dialog.grab_set()
+        redacted=ctk.BooleanVar(value=True)
+        report=ctk.CTkTextbox(dialog,wrap='word');report.pack(fill='both',expand=True,padx=16,pady=16)
+        def refresh():
+            text=diagnostic_report(self.current_profile,self.hw_info,self._analysis,self.preview_plan,self.health,
+                getattr(getattr(self.winfo_toplevel(),'log_console',None),'entries',[]),redact=redacted.get(),evidence=self._evidence or [])
+            report.configure(state='normal');report.delete('1.0','end');report.insert('1.0',text);report.configure(state='disabled')
+        ctk.CTkCheckBox(dialog,text='Redact personal paths',variable=redacted,command=refresh).pack(anchor='w',padx=16)
+        def save():
+            path=filedialog.asksaveasfilename(parent=dialog,defaultextension='.json',initialfile='ArcScaler-diagnostics.json',filetypes=[('JSON report','*.json')])
+            if path:
+                try:atomic_write(path,report.get('1.0','end-1c').encode('utf-8'));dialog.destroy()
+                except OSError as exc:messagebox.showerror('Export failed',str(exc),parent=dialog)
+        button(dialog,'Save report',save,primary=True).pack(side='right',padx=16,pady=16)
+        button(dialog,'Cancel',dialog.destroy).pack(side='right',pady=16)
+        refresh()
 
     def shutdown(self):
-        if self.active_watchdog:
-            self.active_watchdog.stop()
+        if self._closed:return
+        self._remember_view();self._closed=True;self.research_generation+=1
+        for timer in (self._plan_timer,self._view_timer):
+            if timer:self.after_cancel(timer)
+        self.tasks.close()
+        if self.active_watchdog:self.active_watchdog.stop()
         self.dispatcher.close()

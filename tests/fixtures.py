@@ -5,7 +5,7 @@ import struct
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def pe_bytes(dll=True, marker=b'fixture'):
+def pe_bytes(dll=True, marker=b'fixture', imports=()):
     data = bytearray(1024)
     data[:2] = b'MZ'
     struct.pack_into('<I', data, 60, 128)
@@ -17,6 +17,12 @@ def pe_bytes(dll=True, marker=b'fixture'):
     data[392:400] = b'.text\0\0\0'
     struct.pack_into('<IIII', data, 400, 512, 4096, 512, 512)
     data[512:512+len(marker)] = marker
+    if imports:
+        struct.pack_into('<II',data,152+112+8,4096+64,20*(len(imports)+1))
+        for i,name in enumerate(imports):
+            pos=512+256+i*48
+            struct.pack_into('<IIIII',data,512+64+i*20,0,0,0,4096+256+i*48,0)
+            encoded=name.encode()+b'\0';data[pos:pos+len(encoded)]=encoded
     return bytes(data)
 
 
@@ -30,9 +36,9 @@ def package(root, tag='v0.9.4'):
     return version
 
 
-def game(root, name='unique-test-game.exe'):
+def game(root, name='unique-test-game.exe', imports=('d3d12.dll',)):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     exe = root / name
-    exe.write_bytes(pe_bytes(dll=False))
+    exe.write_bytes(pe_bytes(dll=False, imports=imports))
     return exe

@@ -11,20 +11,47 @@ def resource_root():
 
 
 def data_root():
-    override = os.environ.get('OPTISCALER_GUI_DATA_DIR')
-    root = Path(override) if override else Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'OptiScalerXeSS'
+    override = os.environ.get('ARCSCALER_DATA_DIR') or os.environ.get('OPTISCALER_GUI_DATA_DIR')
+    root = Path(override) if override else Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'ArcScaler'
     root.mkdir(parents=True, exist_ok=True)
+    if not override:
+        migrate_legacy(root)
     return root
+
+
+def migrate_legacy(root):
+    """Copy legacy state once; never remove originals or overwrite new settings."""
+    from core.files import atomic_write, write_json
+    import json
+    marker = root / '.migration-complete.json'
+    if marker.exists():
+        return
+    with operation_lock(root):
+        if marker.exists():
+            return
+        sources = list(dict.fromkeys(Path(os.environ[k]) / 'OptiScalerXeSS'
+                                    for k in ('LOCALAPPDATA', 'APPDATA') if os.environ.get(k)))
+        for index, source in enumerate(sources):
+            if not source.is_dir():
+                continue
+            for path in source.rglob('*'):
+                if not path.is_file() or path.is_symlink() or path.name.endswith('.lock'):
+                    continue
+                relative = path.relative_to(source)
+                destination = root / relative
+                if not destination.exists():
+                    atomic_write(destination, source=path)
+                elif destination.read_bytes() != path.read_bytes():
+                    atomic_write(root / 'migration-originals' / str(index) / relative, source=path)
+                    if relative.as_posix() == 'profiles.json':
+                        current = json.loads(destination.read_text(encoding='utf-8'))
+                        previous = json.loads(path.read_text(encoding='utf-8'))
+                        write_json(destination, previous | current)
+        write_json(marker, {'sources': [str(s) for s in sources]})
 
 
 def prepare_assets():
     root = data_root() / 'assets'
-    # Preserve profiles from the previous application's roaming-data location.
-    old_profiles = Path(os.environ.get('APPDATA', '')) / 'OptiScalerXeSS/profiles.json'
-    new_profiles = data_root() / 'profiles.json'
-    if not os.environ.get('OPTISCALER_GUI_DATA_DIR') and old_profiles.is_file() and not new_profiles.exists():
-        from core.files import atomic_write
-        atomic_write(new_profiles, source=old_profiles)
     versions = root / 'versions'
     versions.mkdir(parents=True, exist_ok=True)
     bundled = resource_root() / 'assets/versions'

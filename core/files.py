@@ -71,13 +71,19 @@ def write_json(path, data):
     atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False).encode('utf-8'))
 
 
+class OperationBusy(RuntimeError):
+    """An OS lock is held by another operation."""
+
+
 @contextmanager
 def operation_lock(directory):
     """OS-released lock. Persistent file prevents unlink/reopen lock races."""
     root = Path(directory)
     if not root.is_dir():
         raise ValueError(f'Directory does not exist: {root}')
-    path = safe_path(root, '.optiscaler-operation.lock')
+    lock_root = Path(tempfile.gettempdir()) / 'ArcScaler-locks'
+    lock_root.mkdir(exist_ok=True)
+    path = safe_path(lock_root, hashlib.sha256(canonical(root).encode()).hexdigest() + '.lock')
     with open(path, 'a+b') as stream:
         if os.name == 'nt':
             import msvcrt
@@ -88,7 +94,7 @@ def operation_lock(directory):
             try:
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
-                raise RuntimeError('Another operation is using this directory.') from exc
+                raise OperationBusy('Another operation is using this directory.') from exc
             try:
                 yield
             finally:

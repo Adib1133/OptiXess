@@ -2,14 +2,17 @@
 import os
 from pathlib import Path
 import subprocess
+import struct
 from core.files import canonical, inside, validate_pe
 from core.game_rules import recipe_for, validate_location
+from core.pe import inspect_pe
 
 
 class GameDetector:
     DLSS_FILES = ['nvngx_dlss.dll', 'nvngx_dlssg.dll', 'nvngx_dlssd.dll', '_nvngx.dll', 'nvngx.dll']
     FSR_FILES = ['ffx_fsr2api_dx12.dll', 'ffx_fsr2api_x64.dll', 'ffx_fsr3api_dx12.dll',
-                 'ffx_fsr3api_x64.dll', 'amd_fidelityfx_dx12.dll', 'amd_fidelityfx_vk.dll']
+                 'ffx_fsr3api_x64.dll', 'amd_fidelityfx_dx12.dll', 'amd_fidelityfx_vk.dll',
+                 'ffx_frameinterpolation_x64.dll', 'ffx_frameinterpolation_dx12.dll', 'amd_fidelityfx_framegeneration_dx12.dll']
     XESS_FILES = ['libxess.dll', 'libxess_dx11.dll', 'libxess_fg.dll', 'libxessfg.dll', 'libxell.dll']
     OPTISCALER_FILES = ['optiscaler.dll', 'optiscaler.ini', 'fakenvapi.dll', 'fakenvapi.ini']
     IGNORE_DIRS = {'saves', 'savegames', 'screenshots', 'logs', 'crashdumps', 'shadercache',
@@ -22,6 +25,8 @@ class GameDetector:
     @staticmethod
     def _walk(root):
         for folder, dirs, files in os.walk(root):
+            from core.tasks import checkpoint
+            checkpoint()
             depth = len(Path(folder).relative_to(root).parts)
             dirs[:] = sorted(d for d in dirs if depth < 12 and d.lower() not in GameDetector.IGNORE_DIRS
                              and not Path(folder, d).is_symlink()
@@ -107,9 +112,6 @@ class GameDetector:
     @staticmethod
     def _detect_anti_cheat(target_dir, base_dir):
         for root, dirs, files in GameDetector._walk(base_dir):
-            if len(Path(root).relative_to(base_dir).parts) > 3:
-                dirs[:] = []
-                continue
             for name in [*dirs, *files]:
                 for label, indicators in GameDetector.ANTI_CHEAT_INDICATORS.items():
                     if any(ind in name.lower() for ind in indicators):
@@ -117,7 +119,7 @@ class GameDetector:
         return None
 
     @staticmethod
-    def analyze_game(path):
+    def analyze_game(path, base_dir=None):
         try:
             if not path:
                 raise ValueError('Path is empty.')
@@ -131,9 +133,17 @@ class GameDetector:
             else:
                 exe = resolved
                 base = GameDetector._infer_game_root(exe)
+                if any(word in exe.stem.lower() for word in ('launcher', 'bootstrap', 'start')):
+                    candidate = GameDetector._find_primary_exe_in_folder(base)
+                    if candidate:
+                        exe = Path(candidate)
             if exe.suffix.lower() != '.exe':
                 raise ValueError('Select a Windows game executable.')
             validate_pe(exe, dll=False)
+            if base_dir:
+                if not inside(exe, base_dir):
+                    raise ValueError('Selected executable is outside the game installation.')
+                base = str(Path(base_dir).resolve())
             folder = str(exe.parent)
             lower_parts = [p.lower() for p in exe.parts]
             engine = 'Generic Windows / DirectX'
@@ -144,12 +154,30 @@ class GameDetector:
             elif any(p.name.lower().endswith('_data') for p in exe.parent.iterdir() if p.is_dir()):
                 engine = 'Unity Engine'
             locations, detected = GameDetector._deep_scan_upscalers(base, folder)
+            pe = inspect_pe(exe)
+            if pe['graphics_api'] == 'Unknown':
+                local = {p.name.lower() for p in exe.parent.iterdir() if p.is_file()}
+                evidence = {'DX12': {'d3d12.dll', 'amd_fidelityfx_dx12.dll', 'ffx_fsr2api_dx12.dll'},
+                            'DX11': {'d3d11.dll', 'libxess_dx11.dll'}, 'Vulkan': {'vulkan-1.dll', 'amd_fidelityfx_vk.dll'}}
+                found = [api for api,names in evidence.items() if names & local]
+                pe.update(graphics_apis=found, graphics_api=found[0] if len(found)==1 else 'Unknown' if not found else 'Multiple')
+            appid = None
+            for parent in exe.parents:
+                if parent.name.lower() == 'common' and parent.parent.name.lower() == 'steamapps':
+                    import re
+                    for manifest in parent.parent.glob('appmanifest_*.acf'):
+                        text = manifest.read_text(encoding='utf-8', errors='replace')
+                        match = re.search(r'"installdir"\s+"([^"]+)"', text)
+                        if match and Path(base).resolve().is_relative_to(parent / match[1]):
+                            appid = manifest.stem.removeprefix('appmanifest_')
+                            break
             return {'valid': True, 'target_exe': str(exe), 'target_dir': folder, 'base_dir': base,
+                    **pe, 'steam_appid': appid,
                     'all_target_dirs': [folder], 'discovered_locations': locations, 'detected_upscalers': detected,
                     'game_name': GameDetector._extract_game_name(base, str(exe)), 'engine': engine,
                     'anti_cheat': GameDetector._detect_anti_cheat(folder, base), 'recommended_hook': 'dxgi.dll',
                     'is_unreal_shipping': '-shipping' in exe.name.lower()}
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        except (OSError, ValueError, struct.error, subprocess.SubprocessError) as exc:
             return {'valid': False, 'error': str(exc)}
 
     @staticmethod
